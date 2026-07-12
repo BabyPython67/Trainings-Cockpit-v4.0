@@ -9,7 +9,7 @@ import {
   Plus, Check, ChevronRight, ChevronLeft, ChevronDown, Info, Trophy,
   Trash2, Heart, RotateCcw, ExternalLink, Sparkles, Upload, ArrowUp, ArrowDown,
   HeartPulse, Mountain, Download, Copy, RefreshCw, Settings, Sun, MonitorSmartphone, Flame, Target, Utensils, Watch,
-  GraduationCap,
+  GraduationCap, Thermometer,
 } from "lucide-react";
 
 /* ===================== Sport-Farben ===================== */
@@ -114,7 +114,7 @@ const TOURNAMENT = atMidnight(new Date(2026, 6, 15)); // Mi 15.07.2026
 const TOTAL_WEEKS = 16;
 
 function mondayOf(d) { const x = atMidnight(d); return new Date(x.getTime() - ((x.getDay() + 6) % 7) * DAY_MS); }
-function planWeekOf(d) { const idx = Math.round((mondayOf(d) - PLAN_START) / (7 * DAY_MS)); return Math.min(TOTAL_WEEKS, Math.max(1, idx + 1)); }
+function planWeekOf(d, illnessLog, planEndMode) { const idx = Math.round((mondayOf(d) - PLAN_START) / (7 * DAY_MS)); return Math.min(planTotalWeeks(illnessLog, planEndMode), Math.max(1, idx + 1)); }
 const mondayOfWeek = (w) => new Date(PLAN_START.getTime() + (w - 1) * 7 * DAY_MS);
 const TEST_DATE = new Date(mondayOfWeek(TOTAL_WEEKS).getTime() + 2 * DAY_MS); // Mi der Woche 16
 const fmtDM = (d) => d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
@@ -179,18 +179,71 @@ function weekMeta(week) {
   const tDay = hasT ? DAYS[Math.round((TOURNAMENT - monday) / DAY_MS)] : null;
   return { monday, sunday, hasT, phase, tDay };
 }
-function buildWeekPlan(week, phaseOverride, vbSlots) {
-  const runs = getRunWeek(week);
-  const { hasT, phase: autoPhase, tDay } = weekMeta(week);
+
+/* ===== v5.0: Krankheits-Logik — Phasen erkennen, Progression verzögern, Planende steuern ===== */
+const ILLNESS_RAMP_DAYS = 3; // Wiedereinstiegs-Fenster nach Krankheitsende: Umfang vor Intensität
+function illnessPhaseForDate(date, illnessLog) {
+  const t = atMidnight(date).getTime();
+  for (const e of illnessLog || []) {
+    if (!e || !e.start) continue;
+    const s = new Date(e.start + "T00:00:00").getTime();
+    const en = e.end ? new Date(e.end + "T00:00:00").getTime() : atMidnight(new Date()).getTime(); // offenes Ende = noch krank
+    if (t >= s && t <= en) return "sick";
+    if (e.end && t > en && t <= en + ILLNESS_RAMP_DAYS * DAY_MS) return "ramp";
+  }
+  return null;
+}
+// Kalenderwochen mit >=3 Krank-/Aufbau-Tagen zählen nicht als normale Trainingswoche
+function lostTrainingWeeks(illnessLog) {
+  if (!illnessLog || !illnessLog.length) return 0;
+  let lost = 0;
+  for (let w = 1; w <= TOTAL_WEEKS; w++) {
+    const monday = mondayOfWeek(w);
+    let affected = 0;
+    for (let i = 0; i < 7; i++) if (illnessPhaseForDate(new Date(monday.getTime() + i * DAY_MS), illnessLog)) affected++;
+    if (affected >= 3) lost++;
+  }
+  return lost;
+}
+function lastAffectedWeek(illnessLog) {
+  if (!illnessLog || !illnessLog.length) return 0;
+  let last = 0;
+  for (let w = 1; w <= TOTAL_WEEKS; w++) {
+    const monday = mondayOfWeek(w);
+    for (let i = 0; i < 7; i++) if (illnessPhaseForDate(new Date(monday.getTime() + i * DAY_MS), illnessLog)) { last = w; break; }
+  }
+  return last;
+}
+// Nach der Krankheit hinkt der Block-Inhalt dem Kalender um die verlorenen Wochen hinterher —
+// Kalenderwochen-Nummern und der Turniertermin bleiben unangetastet.
+function effectiveWeek(week, illnessLog) {
+  const lost = lostTrainingWeeks(illnessLog);
+  if (!lost || week <= lastAffectedWeek(illnessLog)) return week;
+  return Math.max(1, week - lost);
+}
+// "fixed": Testtermin bleibt, der Endblock wird komprimiert · "dynamic": Plan verlängert sich um die verlorenen Wochen
+function planTotalWeeks(illnessLog, planEndMode) {
+  return TOTAL_WEEKS + (planEndMode === "dynamic" ? lostTrainingWeeks(illnessLog) : 0);
+}
+function testDateFor(illnessLog, planEndMode) {
+  return new Date(mondayOfWeek(planTotalWeeks(illnessLog, planEndMode)).getTime() + 2 * DAY_MS);
+}
+
+function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode) {
+  const { monday, hasT, phase: autoPhase, tDay } = weekMeta(week);
   const phaseNum = phaseOverride || autoPhase;
   const ph = PHASE[phaseNum];
-  const isTestWeek = week >= TOTAL_WEEKS;
-  const strengthMap = isTestWeek ? {} : (phaseNum === 2 && REGEN[week]) ? PHASE2_REGEN_STRENGTH : ph.strength;
+  const isTestWeek = week >= planTotalWeeks(illnessLog, planEndMode);
+  // Krankheits-Verzug: der Blockinhalt folgt der effektiven Trainingswoche; die Testwoche immer dem Testplan
+  const effW = isTestWeek ? TOTAL_WEEKS : effectiveWeek(week, illnessLog);
+  const runs = getRunWeek(effW);
+  const strengthMap = isTestWeek ? {} : (phaseNum === 2 && REGEN[effW]) ? PHASE2_REGEN_STRENGTH : ph.strength;
   const VB = vbMap(vbSlots);
   const mkuid = (day, kind) => `w${week}-${day}-${kind}`; // stabil: hängt nicht an der Position im Tages-Array
 
   return DAYS.map((day) => {
     const items = [];
+    const sickPhase = illnessPhaseForDate(new Date(monday.getTime() + DAYS.indexOf(day) * DAY_MS), illnessLog); // "sick" | "ramp" | null
 
     // Testwoche: Mo & Di sind echte Ruhetage vor dem 5-km-Test
     if (isTestWeek && (day === "Mo" || day === "Di")) {
@@ -213,14 +266,20 @@ function buildWeekPlan(week, phaseOverride, vbSlots) {
     }
     if (hasT && day === tDay) items.push({ uid: mkuid(day, "tournament"), sport: "vb", label: "Schulturnier", dur: "Turniertag", desc: "Schule · Bestleistung anstreben", load: 9, tournament: true });
     else if (VB[day] && !(isTestWeek && day === "Mi")) items.push({ uid: mkuid(day, "vb"), sport: "vb", ...VB[day], load: 6 }); // Testwoche: kein Volleyball am Testtag
+    // v5.0: Krank-/Aufbau-Markierung — Einheiten bleiben sichtbar & abhakbar (uid unverändert), nur Empfehlung/Badge ändern sich
+    if (sickPhase === "sick") items.forEach((it) => { if (it.load > 0) { it.illness = "sick"; it.desc += " · Krank gemeldet — Pause empfohlen, höchstens sehr locker"; } });
+    else if (sickPhase === "ramp") items.forEach((it) => {
+      if (it.sport === "run" && (it.type === "int" || it.type === "tempo")) { it.illness = "ramp"; it.desc += " · Aufbau nach Krankheit: locker statt hart laufen"; }
+      else if (it.sport === "strength") { it.illness = "ramp"; it.desc += " · Aufbau nach Krankheit: nur Mobility, nichts Schweres"; }
+    });
     if (items.length === 0) items.push({ uid: mkuid(day, "rest"), sport: "rest", label: "Ruhetag", dur: "Erholung", desc: day === "So" ? "Aktive Erholung optional: Spaziergang, Dehnen" : "Kein Training geplant", load: 0 });
     return { day, items, load: items.reduce((s, i) => s + (i.load || 0), 0) };
   });
 }
-const plannedWeekLoad = (week, vbSlots) => buildWeekPlan(week, undefined, vbSlots).reduce((s, d) => s + d.load, 0);
-function weekLoadBySport(week, vbSlots) {
+const plannedWeekLoad = (week, vbSlots, illnessLog, planEndMode) => buildWeekPlan(week, undefined, vbSlots, illnessLog, planEndMode).reduce((s, d) => s + d.load, 0);
+function weekLoadBySport(week, vbSlots, illnessLog, planEndMode) {
   const out = { run: 0, vb: 0, strength: 0 };
-  buildWeekPlan(week, undefined, vbSlots).forEach((d) => d.items.forEach((it) => { if (out[it.sport] != null) out[it.sport] += it.load || 0; }));
+  buildWeekPlan(week, undefined, vbSlots, illnessLog, planEndMode).forEach((d) => d.items.forEach((it) => { if (out[it.sport] != null) out[it.sport] += it.load || 0; }));
   return out;
 }
 // Einmalige Migration: alte positionsbasierte Häkchen-Keys ("3-Mi-1") auf stabile uids ("w3-Mi-vb") umziehen
@@ -282,7 +341,7 @@ function kcalPlan(profile) {
 const garminKcalOn = (runLog, date) => runLog.reduce((s, r) => s + (r.date === date && r.calories ? r.calories : 0), 0);
 const ma7w = (points) => points.map((p, i, a) => { const win = a.slice(Math.max(0, i - 6), i + 1); return { ...p, ma: Math.round((win.reduce((s, x) => s + x.kg, 0) / win.length) * 10) / 10 }; });
 
-const DEFAULT_DATA = { runLog: [], strengthLog: [], recoveryLog: [], done: {}, prios: ["vb", "run", "strength"], theme: "auto", vbSlots: DEFAULT_VB_SLOTS, nutrition: NUT_DEFAULT, schoolLog: [] };
+const DEFAULT_DATA = { runLog: [], strengthLog: [], recoveryLog: [], done: {}, prios: ["vb", "run", "strength"], theme: "auto", vbSlots: DEFAULT_VB_SLOTS, nutrition: NUT_DEFAULT, schoolLog: [], illnessLog: [], planEndMode: "fixed" };
 const hasStorage = typeof window !== "undefined" && window.storage;
 function usePersistentData() {
   const [data, setData] = useState(DEFAULT_DATA);
@@ -554,16 +613,17 @@ function InfoToggle({ label, children }) {
     </div>
   );
 }
-// Woche gilt als erfüllt, wenn mind. 80 % der abhakbaren Einheiten erledigt sind
-function weekFulfilled(w, done, vbSlots) {
-  const items = buildWeekPlan(w, undefined, vbSlots).flatMap((d) => d.items).filter((i) => i.load > 0);
-  if (!items.length) return false;
+// Woche gilt als erfüllt, wenn mind. 80 % der abhakbaren Einheiten erledigt sind.
+// v5.0: Krank-Tage zählen nicht mit — eine Krankheitswoche bricht die Serie nicht.
+function weekFulfilled(w, done, vbSlots, illnessLog, planEndMode) {
+  const items = buildWeekPlan(w, undefined, vbSlots, illnessLog, planEndMode).flatMap((d) => d.items).filter((i) => i.load > 0 && i.illness !== "sick");
+  if (!items.length) return true; // komplett entschuldigte Woche: Serie läuft weiter
   return items.filter((i) => done[i.uid]).length / items.length >= 0.8;
 }
-function computeStreak(currentWeek, done, vbSlots) {
+function computeStreak(currentWeek, done, vbSlots, illnessLog, planEndMode) {
   let s = 0;
-  for (let w = currentWeek - 1; w >= 1; w--) { if (weekFulfilled(w, done, vbSlots)) s++; else break; }
-  if (weekFulfilled(currentWeek, done, vbSlots)) s++;
+  for (let w = currentWeek - 1; w >= 1; w--) { if (weekFulfilled(w, done, vbSlots, illnessLog, planEndMode)) s++; else break; }
+  if (weekFulfilled(currentWeek, done, vbSlots, illnessLog, planEndMode)) s++;
   return s;
 }
 const RECO_COLORS = { warn: ["#e11d48", "#fb7185"], mid: ["#d97706", "#fbbf24"], go: ["#0d9488", "#5eead4"], info: ["#6366f1", "#a5b4fc"], rest: ["#64748b", "#b6c2d1"], none: ["#64748b", "#b6c2d1"] };
@@ -642,6 +702,8 @@ function SessionRow({ item, done, onToggle, onExpand, isOpen, extra }) {
             <div className="flex items-center gap-2 flex-wrap">
               <span className={`font-semibold text-sm ${done ? "line-through text-slate-400" : "text-slate-800"}`}>{item.label}{item.time ? <span className="font-num text-slate-500 font-medium"> · {item.time}</span> : ""}</span>
               {item.taper && <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">Taper</span>}
+              {item.illness === "sick" && <span className="text-[10px] font-semibold text-rose-700 bg-rose-100 rounded px-1.5 py-0.5">Krank</span>}
+              {item.illness === "ramp" && <span className="text-[10px] font-semibold text-sky-700 bg-sky-100 rounded px-1.5 py-0.5">Aufbau</span>}
             </div>
             <div className="text-xs text-slate-500">{item.dur} · {item.desc}</div>
           </div>
@@ -692,25 +754,53 @@ function SchoolGlanceCard({ data, goSchule }) {
     </button>
   );
 }
+/* v5.0: Erklärt während/nach einer Krankheit, was die App automatisch angepasst hat */
+function IllnessNoticeCard({ data }) {
+  const dark = useDark();
+  const log = data.illnessLog || [];
+  if (!log.length) return null;
+  const phase = illnessPhaseForDate(new Date(), log);
+  if (!phase) return null;
+  const lost = lostTrainingWeeks(log);
+  const dynamic = data.planEndMode === "dynamic";
+  const col = phase === "sick" ? "#e11d48" : "#0284c7";
+  const text = phase === "sick"
+    ? "Deine Einheiten sind als „Krank“ markiert und zählen nicht gegen deine Serie. Höchstens sehr leichte Bewegung, solange die Symptome nur oberhalb des Halses sind — beende den Eintrag im Recovery-Bereich, sobald du symptomfrei bist."
+    : `Locker wieder einsteigen — harte Einheiten sind die nächsten Tage auf leichte Empfehlungen umgestellt.${lost ? (dynamic ? ` Dein Plan verlängert sich um ${lost} Woche${lost === 1 ? "" : "n"}, der 5-km-Test rückt entsprechend nach hinten.` : ` Dein aktueller Trainingsblock läuft ${lost} Woche${lost === 1 ? "" : "n"} länger, bevor die nächste Steigerung kommt — Test- und Turniertermin bleiben unverändert.`) : ""}`;
+  return (
+    <Card className="p-4" style={{ background: col + (dark ? "21" : "12"), borderColor: col + (dark ? "59" : "44") }}>
+      <div className="flex items-start gap-2.5">
+        <Thermometer size={16} style={{ color: safeText(dark, col) }} className="mt-0.5 shrink-0" />
+        <div className="min-w-0">
+          <div className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: safeText(dark, col) }}>{phase === "sick" ? "Krank gemeldet — Erholung hat Vorrang" : "Aufbau nach Krankheit"}</div>
+          <p className="text-xs leading-relaxed mt-1" style={{ color: safeText(dark, col) }}>{text}</p>
+        </div>
+      </div>
+    </Card>
+  );
+}
 function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWeek, goRecovery, goKcal, goSchule, tournamentPassed }) {
   const dark = useDark();
   const today = new Date();
   const todayKey = DAYS[(today.getDay() + 6) % 7];
   const todayPlan = plan.find((d) => d.day === todayKey);
-  const inPlan = today >= PLAN_START && currentWeek <= TOTAL_WEEKS;
+  const totalW = planTotalWeeks(data.illnessLog, data.planEndMode);
+  const inPlan = today >= PLAN_START && currentWeek <= totalW;
   const recents = [...data.recoveryLog].sort((a, b) => b.date.localeCompare(a.date));
   const latest = recents[0];
   const avgSleep = recents.length ? recents.slice(0, 5).reduce((s, r) => s + (r.sleep || 0), 0) / Math.min(5, recents.length) : null;
   const prios = data.prios?.length === 3 ? data.prios : DEFAULT_DATA.prios;
   const weekLoad = plan.reduce((s, d) => s + d.load, 0);
   const status = readinessStatus(weekLoad, avgSleep, latest?.readiness, SPORT[prios[2]].label, napFromEntry(latest));
-  const prevWeekLoad = currentWeek > 1 ? plannedWeekLoad(currentWeek - 1, data.vbSlots) : null;
+  const prevWeekLoad = currentWeek > 1 ? plannedWeekLoad(currentWeek - 1, data.vbSlots, data.illnessLog, data.planEndMode) : null;
   const doneThisWeek = plan.reduce((a, d) => a + d.items.filter((it) => it.load > 0 && data.done[it.uid]).length, 0);
-  const totalThisWeek = plan.reduce((a, d) => a + d.items.filter((it) => it.load > 0).length, 0);
-  const daysToTest = Math.ceil((TEST_DATE - atMidnight(today)) / DAY_MS);
+  // v5.0: Krank-Tage zählen nicht in den Nenner — abgehakte (doch trainierte) Einheiten aber schon
+  const totalThisWeek = plan.reduce((a, d) => a + d.items.filter((it) => it.load > 0 && (it.illness !== "sick" || data.done[it.uid])).length, 0);
+  const testDay = testDateFor(data.illnessLog, data.planEndMode);
+  const daysToTest = Math.ceil((testDay - atMidnight(today)) / DAY_MS);
   const toggleDone = (uid) => setData((d) => ({ ...d, done: { ...d.done, [uid]: !d.done[uid] } }));
   const [openRun, setOpenRun] = useState(null); // V3: aufklappbarer Garmin-Export beim heutigen Lauf
-  const streak = useMemo(() => computeStreak(currentWeek, data.done, data.vbSlots), [currentWeek, data.done, data.vbSlots]);
+  const streak = useMemo(() => computeStreak(currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode), [currentWeek, data.done, data.vbSlots, data.illnessLog, data.planEndMode]);
   const reco = dailyRecommendation(todayPlan ? todayPlan.items : [], status.level, latest);
   const [recoAccent, recoBright] = RECO_COLORS[reco.tone] || RECO_COLORS.none;
   const recoText = dark ? recoBright : recoAccent;
@@ -720,13 +810,13 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
     const idx = DAYS.indexOf(todayKey);
     for (let off = 1; off <= 7; off++) {
       const di = idx + off, wOff = Math.floor(di / 7), dKey = DAYS[di % 7], w = currentWeek + wOff;
-      if (w > TOTAL_WEEKS) return null;
-      const p = wOff === 0 ? plan : buildWeekPlan(w, undefined, data.vbSlots);
+      if (w > totalW) return null;
+      const p = wOff === 0 ? plan : buildWeekPlan(w, undefined, data.vbSlots, data.illnessLog, data.planEndMode);
       const works = p.find((d) => d.day === dKey)?.items.filter((i) => i.load > 0) || [];
       if (works.length) return { label: off === 1 ? "Morgen" : `Als Nächstes · ${DAY_FULL[dKey]}`, items: works };
     }
     return null;
-  }, [inPlan, todayPlan, todayKey, currentWeek, plan, data.vbSlots]);
+  }, [inPlan, todayPlan, todayKey, currentWeek, totalW, plan, data.vbSlots, data.illnessLog, data.planEndMode]);
   const wkPct = totalThisWeek ? Math.round((doneThisWeek / totalThisWeek) * 100) : 0;
   const movePrio = (i, dir) => {
     const next = [...prios]; const j = i + dir;
@@ -752,9 +842,9 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
               <div className="text-indigo-200 text-[11px] uppercase tracking-wider mt-1">{daysToT > 0 ? "Tage" : "heute!"}</div>
             </div>
           </div>
-          <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white"><Sparkles size={12} /> {PHASE[phaseNow].short} · Woche {currentWeek}/16</div>
+          <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white"><Sparkles size={12} /> {PHASE[phaseNow].short} · Woche {currentWeek}/{totalW}</div>
           <div className="mt-3">
-            <div className="flex justify-between text-[10px] text-indigo-200 mb-1"><span>Diese Woche</span><span className="font-num">{doneThisWeek}/{totalThisWeek} Einheiten</span></div>
+            <div className="flex justify-between text-[10px] text-indigo-200 mb-1"><span>Diese Woche</span><span className="font-num">{totalThisWeek ? `${doneThisWeek}/${totalThisWeek} Einheiten` : "entschuldigt (krank)"}</span></div>
             <div className="h-1.5 rounded-full bg-white/15 overflow-hidden"><div className="h-full rounded-full bg-white/85 transition-all" style={{ width: `${wkPct}%` }} /></div>
           </div>
         </Card>
@@ -764,16 +854,16 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
             <div>
               <Eyebrow color="#99f6e4">Nächstes Ziel</Eyebrow>
               <div className="font-display text-white text-lg font-semibold mt-0.5">5-km-Testlauf</div>
-              <div className="text-teal-100 text-xs mt-0.5">Mi {fmtDM(TEST_DATE)} · Woche 16 · Bestzeit</div>
+              <div className="text-teal-100 text-xs mt-0.5">Mi {fmtDM(testDay)} · Woche {totalW} · Bestzeit</div>
             </div>
             <div className="text-right">
               <div className="font-num text-4xl font-bold text-white leading-none">{daysToTest > 0 ? daysToTest : "—"}</div>
               <div className="text-teal-100 text-[11px] uppercase tracking-wider mt-1">{daysToTest > 0 ? "Tage" : "vorbei"}</div>
             </div>
           </div>
-          <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white"><Sparkles size={12} /> Turnier absolviert · {PHASE[2].short} · Woche {currentWeek}/16</div>
+          <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white"><Sparkles size={12} /> Turnier absolviert · {PHASE[2].short} · Woche {currentWeek}/{totalW}</div>
           <div className="mt-3">
-            <div className="flex justify-between text-[10px] text-teal-100 mb-1"><span>Diese Woche</span><span className="font-num">{doneThisWeek}/{totalThisWeek} Einheiten</span></div>
+            <div className="flex justify-between text-[10px] text-teal-100 mb-1"><span>Diese Woche</span><span className="font-num">{totalThisWeek ? `${doneThisWeek}/${totalThisWeek} Einheiten` : "entschuldigt (krank)"}</span></div>
             <div className="h-1.5 rounded-full bg-white/15 overflow-hidden"><div className="h-full rounded-full bg-white/85 transition-all" style={{ width: `${wkPct}%` }} /></div>
           </div>
         </Card>
@@ -798,6 +888,9 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
         ) : <div className="mt-3 text-[11px] text-slate-400">Noch kein Check-in — tippe oben rechts, um Schlaf & Form einzutragen.</div>}
       </Card>
       </div>
+
+      {/* v5.0: Krankheits-Status — was die App gerade automatisch anders macht */}
+      <IllnessNoticeCard data={data} />
 
       {/* 2.0: Konkrete Tagesempfehlung aus Ampel + Muskelkater + Tagesplan */}
       {inPlan && (
@@ -846,7 +939,7 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
                 <SessionRow key={it.uid} item={it} done={!!data.done[it.uid]} onToggle={it.load > 0 ? () => toggleDone(it.uid) : undefined}
                   onExpand={it.sport === "run" ? () => setOpenRun(openRun === it.uid ? null : it.uid) : undefined}
                   isOpen={openRun === it.uid}
-                  extra={it.sport === "run" ? <GarminExport item={it} week={currentWeek} /> : undefined}
+                  extra={it.sport === "run" ? <GarminExport item={it} week={effectiveWeek(currentWeek, data.illnessLog)} /> : undefined}
                 />
               ))
             : <Card className="p-4 text-sm text-slate-500">Heute liegt außerhalb des 16-Wochen-Plans.</Card>}
@@ -901,7 +994,7 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
       </div>
 
       <div className="flex gap-2.5">
-        <Stat label="Erledigt (Wo.)" value={`${doneThisWeek}/${totalThisWeek}`} accent="#6366f1" icon={<Check size={13} className="text-indigo-500" />} />
+        <Stat label="Erledigt (Wo.)" value={totalThisWeek ? `${doneThisWeek}/${totalThisWeek}` : "krank"} accent="#6366f1" icon={<Check size={13} className="text-indigo-500" />} />
         <Stat label="Streak" value={streak} unit="Wo." accent="#f59e0b" icon={<Flame size={13} className="text-amber-500" />} />
         <Stat label="Schlaf-Ø" value={avgSleep ? avgSleep.toFixed(1) : "—"} unit="h" accent="#0f766e" icon={<Moon size={13} className="text-teal-600" />} />
       </div>
@@ -954,9 +1047,12 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
   useEffect(() => { setPhaseView(weekMeta(week).phase); }, [week]);
   const meta = weekMeta(week);
   const effPhase = tournamentPassed ? weekMeta(week).phase : phaseView;
-  const plan = buildWeekPlan(week, effPhase, data.vbSlots);
+  const plan = buildWeekPlan(week, effPhase, data.vbSlots, data.illnessLog, data.planEndMode);
   const ph = PHASE[effPhase];
-  const isRegen = !!REGEN[week], isTestWeek = week >= TOTAL_WEEKS;
+  const totalW = planTotalWeeks(data.illnessLog, data.planEndMode);
+  const isTestWeek = week >= totalW;
+  const effW = isTestWeek ? TOTAL_WEEKS : effectiveWeek(week, data.illnessLog);
+  const isRegen = !!REGEN[effW];
   const toggleDone = (uid) => setData((d) => ({ ...d, done: { ...d.done, [uid]: !d.done[uid] } }));
 
   return (
@@ -964,7 +1060,7 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
       <Card className="p-3 flex items-center justify-between">
         <button disabled={week <= 1} onClick={() => setWeek((w) => Math.max(1, w - 1))} className="h-11 w-11 rounded-xl bg-slate-100 flex items-center justify-center disabled:opacity-30"><ChevronLeft size={18} /></button>
         <div className="text-center"><div className="font-display font-bold text-slate-900">Woche {week}</div><div className="text-[11px] text-slate-500 font-num">{fmtDM(meta.monday)} – {fmtDM(meta.sunday)}{week === currentWeek ? " · aktuell" : ""}</div></div>
-        <button disabled={week >= TOTAL_WEEKS} onClick={() => setWeek((w) => Math.min(TOTAL_WEEKS, w + 1))} className="h-11 w-11 rounded-xl bg-slate-100 flex items-center justify-center disabled:opacity-30"><ChevronRight size={18} /></button>
+        <button disabled={week >= totalW} onClick={() => setWeek((w) => Math.min(totalW, w + 1))} className="h-11 w-11 rounded-xl bg-slate-100 flex items-center justify-center disabled:opacity-30"><ChevronRight size={18} /></button>
       </Card>
 
       {/* Phasen-Umschalter nur solange das Turnier noch ansteht */}
@@ -999,7 +1095,7 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
                     onToggle={it.load > 0 ? () => toggleDone(it.uid) : undefined}
                     onExpand={(it.ex && it.ex.length) || it.sport === "run" ? () => setOpen(open === it.uid ? null : it.uid) : undefined}
                     isOpen={open === it.uid}
-                    extra={it.sport === "strength" && it.ex ? <StrengthQuickLog item={it} setData={setData} /> : it.sport === "run" ? <GarminExport item={it} week={week} /> : undefined}
+                    extra={it.sport === "strength" && it.ex ? <StrengthQuickLog item={it} setData={setData} /> : it.sport === "run" ? <GarminExport item={it} week={effW} /> : undefined}
                   />
                 ))}
               </div>
@@ -1038,14 +1134,15 @@ function guessRunType(paceSec, dist, sec) {
 // buildWeekPlan ist die einzige Quelle der Wahrheit — damit greifen automatisch auch
 // Taper (Turnierwoche: Di-Intervalle -> Shakeout/easy), Regenerationswochen und die Testwoche.
 const __planRunCache = {};
-function plannedRunFor(dateISO) {
+function plannedRunFor(dateISO, illnessLog, planEndMode) {
   if (!dateISO) return null;
   const d = new Date(dateISO + "T12:00:00"); // Mittag: keine Zeitzonen-Kippkante
   if (isNaN(d) || atMidnight(d) < PLAN_START) return null;
   const week = Math.round((mondayOf(d) - PLAN_START) / (7 * DAY_MS)) + 1; // bewusst NICHT geklemmt: außerhalb des Plans -> null
-  if (week < 1 || week > TOTAL_WEEKS) return null;
+  if (week < 1 || week > planTotalWeeks(illnessLog, planEndMode)) return null;
   const day = DAYS[(d.getDay() + 6) % 7];
-  const plan = __planRunCache[week] || (__planRunCache[week] = buildWeekPlan(week));
+  const key = `${week}|${lostTrainingWeeks(illnessLog)}|${planEndMode === "dynamic" ? "d" : "f"}`; // Cache invalidiert sich, wenn sich der Krankheits-Verzug ändert
+  const plan = __planRunCache[key] || (__planRunCache[key] = buildWeekPlan(week, undefined, undefined, illnessLog, planEndMode));
   const run = plan.find((x) => x.day === day)?.items.find((i) => i.sport === "run");
   return run ? { week, day, type: run.type } : null;
 }
@@ -1053,8 +1150,8 @@ const isQualityType = (t) => t === "int" || t === "tempo" || t === "test";
 // Typ-Zuordnung beim Import: Plan gewinnt, Pace ist nur Fallback.
 // mismatch warnt nur bei grobem Widerspruch (Plan locker, gelaufen schnell — oder umgekehrt);
 // Feinunterschiede wie Tempo vs. Intervalle entscheidet allein der Plan.
-function assignRunType(dateISO, paceSec, dist, sec) {
-  const planInfo = plannedRunFor(dateISO);
+function assignRunType(dateISO, paceSec, dist, sec, illnessLog, planEndMode) {
+  const planInfo = plannedRunFor(dateISO, illnessLog, planEndMode);
   const paceGuess = guessRunType(paceSec, dist, sec);
   if (!planInfo) return { type: paceGuess, source: "pace", paceGuess, planInfo: null, mismatch: false };
   const mismatch = isQualityType(planInfo.type) !== isQualityType(paceGuess);
@@ -1132,13 +1229,13 @@ function MiniBadge({ icon, text, color }) {
 // Splits v4: Runden-Liste statt Balkendiagramm. Jede Runde eine Zeile mit exakter Pace,
 // Abweichungsbalken relativ zum Ø Arbeit (links = schneller, rechts = langsamer) und HF.
 // Kein Achsen-/Kontrast-/Clipping-Risiko, exakte Werte direkt lesbar, 380px-tauglich.
-function SplitsChart({ laps, run }) {
+function SplitsChart({ laps, run, illnessLog }) {
   const dark = useDark();
   const eff = run.type === "int" || run.type === "tempo" ? runEffort(run) : null;
   const workSet = eff && eff.work ? eff.work : null;
   const refPace = eff ? eff.pace : run.pace;
-  const w = planWeekOf(new Date(run.date + "T12:00:00"));
-  const target = (run.type === "int" || run.type === "tempo") && w >= 1 && w <= TOTAL_WEEKS ? Math.round(targetPaceSec(run.type, w)) : null;
+  const w = planWeekOf(new Date(run.date + "T12:00:00"), illnessLog);
+  const target = (run.type === "int" || run.type === "tempo") && w >= 1 && w <= TOTAL_WEEKS ? Math.round(targetPaceSec(run.type, effectiveWeek(w, illnessLog))) : null;
   const rows = laps.map((l) => {
     const isWork = workSet ? workSet.has(l.lap) : true; // ohne eff (Easy/Lang): alles regulär
     return { lap: l.lap, pace: l.pace, hr: l.hr, dist: l.dist, isWork, dev: isWork ? l.pace - refPace : null };
@@ -1185,13 +1282,13 @@ function SplitsChart({ laps, run }) {
 function RunProgress({ data, setData, currentWeek }) {
   const dark = useDark();
   const [type, setType] = useState("int");
-  const [form, setForm] = useState(() => ({ date: todayISO(), type: plannedRunFor(todayISO())?.type ?? "int", dist: "", time: "", typeTouched: false })); // v3.3: Typ aus Plan vorbelegt
+  const [form, setForm] = useState(() => ({ date: todayISO(), type: plannedRunFor(todayISO(), data.illnessLog, data.planEndMode)?.type ?? "int", dist: "", time: "", typeTouched: false })); // v3.3: Typ aus Plan vorbelegt
   const [importMsg, setImportMsg] = useState(null);
   const [pending, setPending] = useState(null); // Vorschau eines erkannten Einzellaufs, wartet auf Datums-Bestätigung
   const [openRun, setOpenRun] = useState(null); // welcher Lauf hat seine Splits aufgeklappt
   const fileRef = useRef(null);
 
-  const add = () => { const sec = parseTimeToSec(form.time), dist = Number(String(form.dist).replace(",", ".")); if (!sec || !dist) return; setData((d) => ({ ...d, runLog: [...d.runLog, { id: uid(), date: form.date, type: form.type, dist, sec, pace: sec / dist }] })); setForm((f) => ({ ...f, dist: "", time: "", typeTouched: false, type: plannedRunFor(f.date)?.type ?? "int" })); }; // typeTouched wird nicht gespeichert; nach Add erneut aus Plan vorbelegen
+  const add = () => { const sec = parseTimeToSec(form.time), dist = Number(String(form.dist).replace(",", ".")); if (!sec || !dist) return; setData((d) => ({ ...d, runLog: [...d.runLog, { id: uid(), date: form.date, type: form.type, dist, sec, pace: sec / dist }] })); setForm((f) => ({ ...f, dist: "", time: "", typeTouched: false, type: plannedRunFor(f.date, data.illnessLog, data.planEndMode)?.type ?? "int" })); }; // typeTouched wird nicht gespeichert; nach Add erneut aus Plan vorbelegen
   const { undo, trigger: triggerUndo, doUndo } = useUndoDelete(setData);
   const remove = (id) => {
     const item = data.runLog.find((r) => r.id === id);
@@ -1228,7 +1325,7 @@ function RunProgress({ data, setData, currentWeek }) {
   };
   const discardPending = () => { setPending(null); setImportMsg(null); };
   // v3.3: Herkunft des Typ-Vorschlags für die Vorschau-Karte (Plan-Treffer vs. Pace-Schätzung)
-  const pendingAssign = pending ? assignRunType(pending.date, pending.pace, pending.dist, pending.sec) : null;
+  const pendingAssign = pending ? assignRunType(pending.date, pending.pace, pending.dist, pending.sec, data.illnessLog, data.planEndMode) : null;
 
   const handleCsv = (file) => {
     if (!file) return;
@@ -1255,7 +1352,7 @@ function RunProgress({ data, setData, currentWeek }) {
               const sec = parseTimeToSec(timeRaw);
               if (!dist || isNaN(dist) || !sec) return;
               const pace = sec / dist;
-              const a = assignRunType(date, pace, dist, sec); // v3.3: Plan gewinnt, Pace nur Fallback
+              const a = assignRunType(date, pace, dist, sec, data.illnessLog, data.planEndMode); // v3.3: Plan gewinnt, Pace nur Fallback
               parsed.push({ date, dist: Math.round(dist * 100) / 100, sec, pace, type: a.type, _assign: a, ...extractExtras(row) });
             });
             if (parsed.length) {
@@ -1288,7 +1385,7 @@ function RunProgress({ data, setData, currentWeek }) {
           const sec = parseTimeToSec(timeRaw);
           if (dist && sec && !isNaN(dist)) {
             const pace = sec / dist;
-            const assigned = assignRunType(todayISO(), pace, dist, sec); // v3.3: Plan gewinnt, Pace nur Fallback
+            const assigned = assignRunType(todayISO(), pace, dist, sec, data.illnessLog, data.planEndMode); // v3.3: Plan gewinnt, Pace nur Fallback
             const distR = Math.round(dist * 100) / 100;
             const extras = extractExtras(summaryRow);
             const laps = extractLaps(rows);
@@ -1307,7 +1404,7 @@ function RunProgress({ data, setData, currentWeek }) {
   };
 
   const series = useMemo(() => data.runLog.filter((r) => r.type === type).sort((a, b) => a.date.localeCompare(b.date)).map((r) => ({ date: fmtISOshort(r.date), pace: Math.round(effectivePace(r)) })), [data.runLog, type]); // Intervalle/Tempo: Arbeitsrunden-Pace
-  const target = targetPaceSec(type, currentWeek);
+  const target = targetPaceSec(type, effectiveWeek(currentWeek, data.illnessLog));
   const list = [...data.runLog].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
   const economySeries = useMemo(() => data.runLog.filter((r) => r.cadence).sort((a, b) => a.date.localeCompare(b.date)).map((r) => ({ date: fmtISOshort(r.date), cadence: r.cadence, stride: r.strideLen ?? null })), [data.runLog]);
   // V3: Pace-HF-Verhältnis & VO2max-Schätzung — nur ruhige Läufe (Easy/Lang/Tempo-Block); Intervalle verzerren (HF-Trägheit)
@@ -1382,7 +1479,7 @@ function RunProgress({ data, setData, currentWeek }) {
         <Card className="p-4" style={panel(dark, "#f59e0b", "#fffbeb", "#fcd34d")}>
           <Eyebrow color="#b45309">Vorschau · Datum bestätigen</Eyebrow>
           <div className="mt-2 grid grid-cols-2 gap-2.5">
-            <input type="date" value={pending.date} onChange={(e) => setPending((p) => { const nd = e.target.value; const a = assignRunType(nd, p.pace, p.dist, p.sec); return { ...p, date: nd, ...(p.typeTouched ? {} : { type: a.type }) }; })} className="tc-input col-span-2" />
+            <input type="date" value={pending.date} onChange={(e) => setPending((p) => { const nd = e.target.value; const a = assignRunType(nd, p.pace, p.dist, p.sec, data.illnessLog, data.planEndMode); return { ...p, date: nd, ...(p.typeTouched ? {} : { type: a.type }) }; })} className="tc-input col-span-2" />
             <select value={pending.type} onChange={(e) => setPending({ ...pending, type: e.target.value, typeTouched: true })} className="tc-input col-span-2">{RUN_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
           </div>
           {pendingAssign && !pending.typeTouched && (
@@ -1412,15 +1509,15 @@ function RunProgress({ data, setData, currentWeek }) {
 
       <Card className="p-4"><Eyebrow color="#4338ca">Zielpace aktuell (Woche {currentWeek})</Eyebrow>
         <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-          <div className="rounded-xl bg-indigo-50 p-2.5"><div className="text-[11px] text-indigo-500 font-semibold">Intervalle</div><div className="font-num font-bold text-indigo-900">{secToMMSS(targetPaceSec("int", currentWeek))}/km</div></div>
-          <div className="rounded-xl bg-indigo-50 p-2.5"><div className="text-[11px] text-indigo-500 font-semibold">Tempo</div><div className="font-num font-bold text-indigo-900">{secToMMSS(targetPaceSec("tempo", currentWeek))}/km</div></div>
+          <div className="rounded-xl bg-indigo-50 p-2.5"><div className="text-[11px] text-indigo-500 font-semibold">Intervalle</div><div className="font-num font-bold text-indigo-900">{secToMMSS(targetPaceSec("int", effectiveWeek(currentWeek, data.illnessLog)))}/km</div></div>
+          <div className="rounded-xl bg-indigo-50 p-2.5"><div className="text-[11px] text-indigo-500 font-semibold">Tempo</div><div className="font-num font-bold text-indigo-900">{secToMMSS(targetPaceSec("tempo", effectiveWeek(currentWeek, data.illnessLog)))}/km</div></div>
         </div>
       </Card>
       <Card className="p-4"><Eyebrow>Lauf manuell eintragen</Eyebrow>
         <div className="mt-3 grid grid-cols-2 gap-2.5">
-          <input type="date" value={form.date} onChange={(e) => setForm((f) => { const nd = e.target.value; return { ...f, date: nd, ...(f.typeTouched ? {} : { type: plannedRunFor(nd)?.type ?? "int" }) }; })} className="tc-input col-span-2" />
+          <input type="date" value={form.date} onChange={(e) => setForm((f) => { const nd = e.target.value; return { ...f, date: nd, ...(f.typeTouched ? {} : { type: plannedRunFor(nd, data.illnessLog, data.planEndMode)?.type ?? "int" }) }; })} className="tc-input col-span-2" />
           <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value, typeTouched: true })} className="tc-input col-span-2">{RUN_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
-          {(() => { const fp = plannedRunFor(form.date); return (
+          {(() => { const fp = plannedRunFor(form.date, data.illnessLog, data.planEndMode); return (
             <div className="col-span-2 -mt-1 text-[10.5px] leading-relaxed" style={{ color: safeText(dark, fp ? "#4338ca" : "#94a3b8") }}>
               {fp && !form.typeTouched
                 ? `Aus Plan vorbelegt: Woche ${fp.week}, ${DAY_FULL[fp.day]} — ${RUN_TYPE[fp.type].label}. Bei Bedarf oben anpassen.`
@@ -1553,7 +1650,7 @@ function RunProgress({ data, setData, currentWeek }) {
                 {r.calories && <MiniBadge text={`${r.calories} kcal`} color="#7c3aed" />}
               </div>
             )}
-            {hasLaps && isOpen && <SplitsChart laps={r.laps} run={r} />}
+            {hasLaps && isOpen && <SplitsChart laps={r.laps} run={r} illnessLog={data.illnessLog} />}
           </div>
         );
       })}</Card>}
@@ -1689,6 +1786,51 @@ function Scale({ value, onChange, color }) {
     ))}</div>
   );
 }
+/* v5.0: Krankheit erfassen — markiert betroffene Einheiten, schützt die Serie, verzögert die Plan-Progression */
+function IllnessLogCard({ data, setData, triggerUndo }) {
+  const dark = useDark();
+  const [form, setForm] = useState({ start: todayISO(), end: "", note: "" });
+  const log = data.illnessLog || [];
+  const save = () => {
+    if (!form.start) return;
+    const end = form.end ? (form.end >= form.start ? form.end : form.start) : null;
+    setData((d) => ({ ...d, illnessLog: [...(d.illnessLog || []), { id: uid(), start: form.start, end, note: form.note.trim() }] }));
+    setForm({ start: todayISO(), end: "", note: "" });
+  };
+  const endNow = (id) => setData((d) => ({ ...d, illnessLog: (d.illnessLog || []).map((e) => (e.id === id ? { ...e, end: todayISO() } : e)) }));
+  const remove = (id) => {
+    const item = log.find((e) => e.id === id);
+    setData((d) => ({ ...d, illnessLog: (d.illnessLog || []).filter((e) => e.id !== id) }));
+    if (item) triggerUndo("Krankheits-Eintrag", "illnessLog", item);
+  };
+  const sorted = [...log].sort((a, b) => b.start.localeCompare(a.start));
+  return (
+    <Card className="p-4">
+      <div className="flex items-center gap-1.5"><Thermometer size={13} className="text-rose-600" /><Eyebrow color="#e11d48">Krank / Trainingspause</Eyebrow></div>
+      <p className="text-[11px] text-slate-400 mt-1 mb-2 leading-relaxed">Einheiten in diesem Zeitraum werden als „Krank“ markiert (entschuldigt statt offen), deine Serie bleibt erhalten und der Laufplan steigert sich erst später weiter. Rückwirkendes Eintragen ist ausdrücklich ok. Ohne End-Datum gilt: noch krank.</p>
+      <div className="grid grid-cols-2 gap-2.5">
+        <div><div className="text-[11px] font-semibold text-slate-500 mb-1.5">Von</div><input type="date" value={form.start} onChange={(e) => setForm({ ...form, start: e.target.value })} className="tc-input font-num" /></div>
+        <div><div className="text-[11px] font-semibold text-slate-500 mb-1.5">Bis (optional)</div><input type="date" value={form.end} onChange={(e) => setForm({ ...form, end: e.target.value })} className="tc-input font-num" /></div>
+      </div>
+      <input placeholder="Notiz (z. B. Erkältung)" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className="tc-input mt-2.5" />
+      <button onClick={save} className="mt-2.5 w-full rounded-xl bg-rose-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Eintragen</button>
+      {sorted.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {sorted.map((e) => (
+            <div key={e.id} className="rounded-xl border p-3 flex items-center gap-3" style={{ borderColor: e.end ? (dark ? "#26334a" : "#e2e8f0") : "#e11d4855", background: e.end ? "transparent" : "#e11d48" + (dark ? "1a" : "10") }}>
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-semibold text-slate-800 font-num">{fmtISOshort(e.start)} – {e.end ? fmtISOshort(e.end) : "offen"}</div>
+                <div className="text-xs text-slate-500 mt-0.5">{e.note || "Krankheit"}{!e.end && <span className="font-semibold text-rose-600"> · noch krank</span>}</div>
+              </div>
+              {!e.end && <button onClick={() => endNow(e.id)} className="shrink-0 rounded-lg bg-teal-600 text-white px-2.5 py-1.5 text-[11px] font-semibold">Beenden</button>}
+              <button onClick={() => remove(e.id)} className="shrink-0 p-1.5 text-slate-300"><Trash2 size={15} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
 function RecoveryTab({ data, setData, currentWeek }) {
   const dark = useDark();
   const [form, setForm] = useState({ date: todayISO(), sleep: "", readiness: 0, soreness: 0, note: "", napMin: "", napTime: "frueh_nachmittag", napFeeling: "neutral" });
@@ -1716,28 +1858,38 @@ function RecoveryTab({ data, setData, currentWeek }) {
   const recents = [...sorted].reverse();
   const avgSleep = recents.length ? recents.slice(0, 5).reduce((s, r) => s + (r.sleep || 0), 0) / Math.min(5, recents.length) : null;
   const latest = recents[0];
-  const weekLoad = plannedWeekLoad(currentWeek, data.vbSlots);
+  const weekLoad = plannedWeekLoad(currentWeek, data.vbSlots, data.illnessLog, data.planEndMode);
   const prios = data.prios?.length === 3 ? data.prios : DEFAULT_DATA.prios;
   const status = readinessStatus(weekLoad, avgSleep, latest?.readiness, SPORT[prios[2]].label, napFromEntry(latest));
   const sleepSeries = sorted.slice(-14).map((r) => ({ date: fmtISOshort(r.date), sleep: r.sleep }));
   const tWeek = planWeekOf(TOURNAMENT);
   const weekDays = useMemo(() => {
     const monday = mondayOfWeek(currentWeek);
-    return buildWeekPlan(currentWeek, undefined, data.vbSlots).map((d, i) => {
-      const row = { day: d.day, isToday: isSameDay(new Date(monday.getTime() + i * DAY_MS), new Date()), list: d.items.filter((it) => it.load > 0).map((it) => ({ sport: it.sport, label: it.label, load: it.load || 0, done: !!data.done[it.uid] })) };
-      ["vb", "run", "strength"].forEach((s) => { row[s + "Done"] = 0; row[s + "Open"] = 0; });
-      row.list.forEach((it) => { row[it.sport + (it.done ? "Done" : "Open")] += it.load; });
+    return buildWeekPlan(currentWeek, undefined, data.vbSlots, data.illnessLog, data.planEndMode).map((d, i) => {
+      const row = { day: d.day, isToday: isSameDay(new Date(monday.getTime() + i * DAY_MS), new Date()), list: d.items.filter((it) => it.load > 0).map((it) => ({ sport: it.sport, label: it.label, load: it.load || 0, done: !!data.done[it.uid], excused: !data.done[it.uid] && it.illness === "sick" })) };
+      ["vb", "run", "strength"].forEach((s) => { row[s + "Done"] = 0; row[s + "Excused"] = 0; row[s + "Open"] = 0; });
+      row.list.forEach((it) => { row[it.sport + (it.done ? "Done" : it.excused ? "Excused" : "Open")] += it.load; });
       return row;
     });
-  }, [currentWeek, data.vbSlots, data.done]);
-  const meso = Array.from({ length: TOTAL_WEEKS }, (_, i) => {
+  }, [currentWeek, data.vbSlots, data.done, data.illnessLog, data.planEndMode]);
+  const totalW = planTotalWeeks(data.illnessLog, data.planEndMode);
+  const meso = Array.from({ length: totalW }, (_, i) => {
     const w = i + 1;
-    const bySport = weekLoadBySport(w, data.vbSlots);
-    // Erledigt je Sportart — nur für vergangene/aktuelle Wochen; Zukunft = reiner Plan (alles "offen")
-    const doneBy = { vb: 0, run: 0, strength: 0 };
-    if (w <= currentWeek) buildWeekPlan(w, undefined, data.vbSlots).forEach((d) => d.items.forEach((it) => { if (data.done[it.uid] && doneBy[it.sport] != null) doneBy[it.sport] += it.load || 0; }));
-    const row = { w: `${w}`, current: w === currentWeek, future: w > currentWeek, kind: w >= TOTAL_WEEKS ? "Testwoche" : weekMeta(w).hasT ? "Turnierwoche" : REGEN[w] ? "Regeneration" : "regulär" };
-    ["vb", "run", "strength"].forEach((s) => { row[s + "Done"] = Math.min(doneBy[s], bySport[s]); row[s + "Open"] = Math.max(bySport[s] - doneBy[s], 0); row[s + "Plan"] = bySport[s]; });
+    const bySport = weekLoadBySport(w, data.vbSlots, data.illnessLog, data.planEndMode);
+    // Erledigt/Entschuldigt je Sportart — nur für vergangene/aktuelle Wochen; Zukunft = reiner Plan (alles "offen")
+    const doneBy = { vb: 0, run: 0, strength: 0 }, excusedBy = { vb: 0, run: 0, strength: 0 };
+    if (w <= currentWeek) buildWeekPlan(w, undefined, data.vbSlots, data.illnessLog, data.planEndMode).forEach((d) => d.items.forEach((it) => {
+      if (doneBy[it.sport] == null) return;
+      if (data.done[it.uid]) doneBy[it.sport] += it.load || 0;
+      else if (it.illness === "sick") excusedBy[it.sport] += it.load || 0;
+    }));
+    const effW = w >= totalW ? TOTAL_WEEKS : effectiveWeek(w, data.illnessLog);
+    const row = { w: `${w}`, current: w === currentWeek, future: w > currentWeek, kind: w >= totalW ? "Testwoche" : weekMeta(w).hasT ? "Turnierwoche" : REGEN[effW] ? "Regeneration" : "regulär" };
+    ["vb", "run", "strength"].forEach((s) => {
+      const doneV = Math.min(doneBy[s], bySport[s]);
+      const excusedV = Math.min(excusedBy[s], Math.max(bySport[s] - doneV, 0));
+      row[s + "Done"] = doneV; row[s + "Excused"] = excusedV; row[s + "Open"] = Math.max(bySport[s] - doneV - excusedV, 0); row[s + "Plan"] = bySport[s];
+    });
     return row;
   });
 
@@ -1790,6 +1942,8 @@ function RecoveryTab({ data, setData, currentWeek }) {
         </div>
       </Card>
 
+      <IllnessLogCard data={data} setData={setData} triggerUndo={triggerUndo} />
+
       <Card className="p-4" style={panel(dark, "#14b8a6", "#f0fdfa", "#99f6e4")}>
         <div className="flex items-start gap-2"><Moon size={16} className="text-teal-600 mt-0.5 shrink-0" />
           <div className="text-xs text-teal-900 leading-relaxed">
@@ -1817,7 +1971,7 @@ function RecoveryTab({ data, setData, currentWeek }) {
       {/* Diese Woche im Detail: Tag für Tag, gleiche Bildsprache wie der Mesozyklus */}
       <Card className="p-4">
         <Eyebrow>Diese Woche: Plan vs. Ist (Woche {currentWeek})</Eyebrow>
-        <div className="text-[10px] text-slate-400 mt-1 mb-1">satt = erledigt · blass = offen · Umrandung = heute</div>
+        <div className="text-[10px] text-slate-400 mt-1 mb-1">satt = erledigt · mittel = entschuldigt (krank) · blass = offen · Umrandung = heute</div>
         <div style={{ width: "100%", height: 140 }}><ResponsiveContainer>
           <ComposedChart data={weekDays} margin={{ top: 6, right: 4, left: -4, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} vertical={false} />
@@ -1831,7 +1985,7 @@ function RecoveryTab({ data, setData, currentWeek }) {
                   <div style={{ fontWeight: 700, marginBottom: 3, color: dark ? "#f8fafc" : "#0f172a" }}>{DAY_FULL[d.day]}</div>
                   {d.list.length ? d.list.map((it, i) => (
                     <div key={i} style={{ color: dark ? "#e2e8f0" : "#0f172a" }}>
-                      <span style={{ color: safeText(dark, SPORT[it.sport].color) }}>{it.done ? "✓" : "○"}</span> {it.label} ⚡{it.load}{it.done ? "" : " · offen"}
+                      <span style={{ color: safeText(dark, SPORT[it.sport].color) }}>{it.done ? "✓" : it.excused ? "◐" : "○"}</span> {it.label} ⚡{it.load}{it.done ? "" : it.excused ? " · entschuldigt (krank)" : " · offen"}
                     </div>
                   )) : <div style={{ color: dark ? "#94a3b8" : "#64748b" }}>Ruhetag</div>}
                 </div>
@@ -1839,6 +1993,7 @@ function RecoveryTab({ data, setData, currentWeek }) {
             }} />
             {["vb", "run", "strength"].flatMap((s, si) => [
               <Bar key={s + "d"} dataKey={s + "Done"} stackId="a" fill={SPORT[s].color} maxBarSize={26}>{weekDays.map((d, i) => <Cell key={i} stroke={d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={d.isToday ? 1.5 : 0} />)}</Bar>,
+              <Bar key={s + "e"} dataKey={s + "Excused"} stackId="a" fill={SPORT[s].color} fillOpacity={0.55} maxBarSize={26}>{weekDays.map((d, i) => <Cell key={i} stroke={d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={d.isToday ? 1.5 : 0} />)}</Bar>,
               <Bar key={s + "o"} dataKey={s + "Open"} stackId="a" fill={SPORT[s].color} fillOpacity={dark ? 0.32 : 0.28} maxBarSize={26} radius={si === 2 ? [3, 3, 0, 0] : [0, 0, 0, 0]}>{weekDays.map((d, i) => <Cell key={i} stroke={d.isToday ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={d.isToday ? 1.5 : 0} />)}</Bar>,
             ])}
           </ComposedChart>
@@ -1848,7 +2003,7 @@ function RecoveryTab({ data, setData, currentWeek }) {
       {/* Wochenbelastung: je Sportart satt = erledigt, blass = offen/geplant */}
       <Card className="p-4">
         <Eyebrow>Wochenbelastung: Plan vs. Ist (Mesozyklus)</Eyebrow>
-        <div className="text-[10px] text-slate-400 mt-1 mb-1">satt = erledigt · blass = offen/geplant · Umrandung = aktuelle Woche</div>
+        <div className="text-[10px] text-slate-400 mt-1 mb-1">satt = erledigt · mittel = entschuldigt (krank) · blass = offen/geplant · Umrandung = aktuelle Woche</div>
         <div style={{ width: "100%", height: 170 }}><ResponsiveContainer>
           <ComposedChart data={meso} margin={{ top: 20, right: 4, left: -4, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} vertical={false} />
@@ -1862,7 +2017,7 @@ function RecoveryTab({ data, setData, currentWeek }) {
                   <div style={{ fontWeight: 700, marginBottom: 3, color: dark ? "#f8fafc" : "#0f172a" }}>Woche {label} · {m.kind}</div>
                   {["vb", "run", "strength"].map((s) => m[s + "Plan"] > 0 && (
                     <div key={s} style={{ color: dark ? "#e2e8f0" : "#0f172a" }}>
-                      <span style={{ color: safeText(dark, SPORT[s].color), fontWeight: 600 }}>{SPORT[s].label}:</span> {m.future ? `⚡${m[s + "Plan"]} geplant` : `${m[s + "Done"]} von ${m[s + "Plan"]} ⚡`}
+                      <span style={{ color: safeText(dark, SPORT[s].color), fontWeight: 600 }}>{SPORT[s].label}:</span> {m.future ? `⚡${m[s + "Plan"]} geplant` : `${m[s + "Done"]} von ${m[s + "Plan"]} ⚡${m[s + "Excused"] ? ` · ${m[s + "Excused"]} entschuldigt` : ""}`}
                     </div>
                   ))}
                 </div>
@@ -1871,12 +2026,14 @@ function RecoveryTab({ data, setData, currentWeek }) {
             <ReferenceLine x={`${tWeek}`} stroke="#f59e0b" strokeDasharray="4 4" label={chipLabel("Turnier", "#b45309", dark, "vtop")} />
             {["vb", "run", "strength"].flatMap((s, si) => [
               <Bar key={s + "d"} dataKey={s + "Done"} stackId="a" fill={SPORT[s].color}>{meso.map((m, i) => <Cell key={i} stroke={m.current ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={m.current ? 1.5 : 0} />)}</Bar>,
+              <Bar key={s + "e"} dataKey={s + "Excused"} stackId="a" fill={SPORT[s].color} fillOpacity={0.55}>{meso.map((m, i) => <Cell key={i} stroke={m.current ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={m.current ? 1.5 : 0} />)}</Bar>,
               <Bar key={s + "o"} dataKey={s + "Open"} stackId="a" fill={SPORT[s].color} fillOpacity={dark ? 0.32 : 0.28} radius={si === 2 ? [3, 3, 0, 0] : [0, 0, 0, 0]}>{meso.map((m, i) => <Cell key={i} stroke={m.current ? (dark ? "#e2e8f0" : "#0f172a") : "none"} strokeWidth={m.current ? 1.5 : 0} />)}</Bar>,
             ])}
           </ComposedChart>
         </ResponsiveContainer></div>
         <div className="flex flex-wrap gap-2.5 text-[10px] text-slate-500 mt-1">
           {["vb", "run", "strength"].map((s) => <span key={s} className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: SPORT[s].color }} /> {SPORT[s].label}</span>)}
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: SPORT.run.color, opacity: 0.55 }} /> entschuldigt</span>
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-sm" style={{ background: SPORT.run.color, opacity: 0.3 }} /> offen</span>
         </div>
         <div className="mt-2"><LoadHelp /></div>
@@ -2410,6 +2567,31 @@ function SchoolTab({ data, setData }) {
   );
 }
 
+/* v5.0: Was passiert nach Krankheits-Wochen mit dem Plan-Ende? Nur relevant, wenn Krankheiten eingetragen sind. */
+function PlanEndModeCard({ data, setData }) {
+  if (!(data.illnessLog || []).length) return null;
+  const lost = lostTrainingWeeks(data.illnessLog);
+  const mode = data.planEndMode === "dynamic" ? "dynamic" : "fixed";
+  const opts = [
+    ["fixed", "Testtermin fest", "Endblock wird kürzer"],
+    ["dynamic", "Test verschieben", lost ? `Plan +${lost} Woche${lost === 1 ? "" : "n"}` : "Plan verlängert sich"],
+  ];
+  return (
+    <Card className="p-4">
+      <Eyebrow>Laufplan nach Krankheit</Eyebrow>
+      <p className="text-[11px] text-slate-400 mt-1 mb-2 leading-relaxed">Durch Krankheit verlorene Wochen verzögern die Steigerung des Laufplans automatisch. Hier entscheidest du, was das fürs Plan-Ende bedeutet.</p>
+      <div className="flex gap-2">
+        {opts.map(([id, label, sub]) => (
+          <button key={id} onClick={() => setData((d) => ({ ...d, planEndMode: id }))}
+            className={`flex-1 rounded-xl py-2.5 px-2 text-xs font-semibold border transition flex flex-col items-center gap-0.5 ${mode === id ? "bg-indigo-600 text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`}>
+            <span>{label}</span><span className={`text-[9px] font-medium ${mode === id ? "text-indigo-200" : "text-slate-400"}`}>{sub}</span>
+          </button>
+        ))}
+      </div>
+      <div className="text-[11px] text-slate-400 mt-2 font-num">{lost ? `Aktuell ${lost} verlorene Woche${lost === 1 ? "" : "n"} · ` : ""}5-km-Test: Mi {fmtDM(testDateFor(data.illnessLog, mode))}</div>
+    </Card>
+  );
+}
 function SettingsView({ data, setData, savedAt, onRefresh, refreshing, onReset, onClose }) {
   return (
     <div className="space-y-4">
@@ -2422,6 +2604,7 @@ function SettingsView({ data, setData, savedAt, onRefresh, refreshing, onReset, 
       </Card>
       <ThemeCard data={data} setData={setData} />
       <VBSlotsCard data={data} setData={setData} />
+      <PlanEndModeCard data={data} setData={setData} />
       <SyncCard data={data} setData={setData} savedAt={savedAt} onRefresh={onRefresh} refreshing={refreshing} />
       <Card className="p-4">
         <Eyebrow color="#e11d48">Daten zurücksetzen</Eyebrow>
@@ -2466,11 +2649,11 @@ export default function App() {
   const dark = data.theme === "dark" || (data.theme !== "light" && sysDark);
 
   const today = new Date();
-  const currentWeek = planWeekOf(today);
+  const currentWeek = planWeekOf(today, data.illnessLog, data.planEndMode);
   const tournamentPassed = atMidnight(today) > TOURNAMENT;
   const phaseNow = tournamentPassed ? 2 : 1;
   const daysToT = Math.ceil((TOURNAMENT - atMidnight(today)) / DAY_MS);
-  const plan = useMemo(() => buildWeekPlan(currentWeek, undefined, data.vbSlots), [currentWeek, data.vbSlots]);
+  const plan = useMemo(() => buildWeekPlan(currentWeek, undefined, data.vbSlots, data.illnessLog, data.planEndMode), [currentWeek, data.vbSlots, data.illnessLog, data.planEndMode]);
 
   const reset = () => { if (window.confirm("Alle eingetragenen Daten (Läufe, Kraftwerte, Check-ins, Häkchen) und Einstellungen löschen?")) { setData(DEFAULT_DATA); setShowSettings(false); if (hasStorage) window.storage.delete(STORAGE_KEY, false).catch(() => {}); } };
   const manualRefresh = async () => {
@@ -2568,6 +2751,8 @@ export default function App() {
         .tc-dark .shadow-sm{box-shadow:0 0 0 1px rgba(255,255,255,.03)!important;}
         .tc-dark .tc-input{background:#141d2c;border-color:#31405c;color:#e2e8f0;}
         .tc-dark .bg-amber-400{background-color:#d97706!important;}
+        .tc-dark .bg-sky-100{background-color:rgba(14,165,233,.22)!important;}
+        .tc-dark .text-sky-700{color:#7dd3fc!important;}
       `}</style>
 
       <div className="tc-shell mx-auto">
@@ -2634,7 +2819,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400" style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))" }}>
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v4.1` : "Fortschritt wird automatisch gespeichert · v4.1"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v5.0` : "Fortschritt wird automatisch gespeichert · v5.0"}</span>
           </footer>
         </main>
       </div>
