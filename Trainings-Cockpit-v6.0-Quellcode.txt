@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, ReferenceLine, Cell, ComposedChart, LabelList,
+  Tooltip, ResponsiveContainer, ReferenceLine, ReferenceArea, Cell, ComposedChart, LabelList,
 } from "recharts";
 import Papa from "papaparse";
 import {
@@ -9,7 +9,7 @@ import {
   Plus, Check, ChevronRight, ChevronLeft, ChevronDown, Info, Trophy,
   Trash2, Heart, RotateCcw, ExternalLink, Sparkles, Upload, ArrowUp, ArrowDown,
   HeartPulse, Mountain, Download, Copy, RefreshCw, Settings, Sun, MonitorSmartphone, Flame, Target, Utensils, Watch,
-  GraduationCap, Thermometer, Pencil,
+  GraduationCap, Thermometer, Pencil, Calendar,
 } from "lucide-react";
 
 /* ===================== Sport-Farben ===================== */
@@ -1353,6 +1353,78 @@ function extractLaps(rows) {
 function MiniBadge({ icon, text, color }) {
   return <span className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold font-num" style={{ background: color + "1a", color }}>{icon}{text}</span>;
 }
+/* ==== v6.0: Lauf-Detail-Chart — Pace & Puls je Runde mit den Zielbereichen aus dem Plan ====
+   Zwei gestapelte Ein-Achsen-Charts (bewusst keine Doppel-Y-Achse). Kein schwebender Tooltip:
+   Tippen wählt eine Runde, beide Charts markieren sie, die Werte stehen in einer festen
+   Ablesezeile darunter — auf dem iPhone verdeckt so nichts den Datenpunkt. */
+function usePairReadout(rowCount) {
+  const [idx, setIdx] = useState(null);
+  const onPick = (st) => { if (st && st.activeTooltipIndex != null) setIdx(st.activeTooltipIndex); };
+  const sel = rowCount ? Math.min(idx == null ? rowCount - 1 : idx, rowCount - 1) : null;
+  return { sel, onPick };
+}
+function RunDetailChart({ run, illnessLog, planEndMode }) {
+  const dark = useDark();
+  const eff = runEffort(run);
+  const workSet = run.type === "int" && eff && eff.work ? eff.work : null; // Intervalle: nur Arbeitsrunden
+  const rows = (run.laps || [])
+    .filter((l) => (workSet ? workSet.has(l.lap) : true))
+    .map((l) => ({ x: `R${l.lap}`, pace: Math.round(l.pace), hr: l.hr }));
+  const { sel, onPick } = usePairReadout(rows.length);
+  if (rows.length < 2) return null;
+  const tg = planRunTargets(run.date, run.type, illnessLog, planEndMode);
+  const hasHr = rows.filter((r) => r.hr != null).length >= 2;
+  // Y-Bereiche immer mit dem Zielband vereinigen, damit das Band nie aus dem Chart geclippt wird
+  const paceVals = rows.map((r) => r.pace);
+  let pLo = Math.min(...paceVals), pHi = Math.max(...paceVals);
+  if (tg.pace) { pLo = Math.min(pLo, tg.pace - PACE_BAND_SEC); pHi = Math.max(pHi, tg.pace + PACE_BAND_SEC); }
+  const hrVals = rows.filter((r) => r.hr != null).map((r) => r.hr);
+  let hLo = hrVals.length ? Math.min(...hrVals) : 0, hHi = hrVals.length ? Math.max(...hrVals) : 0;
+  if (tg.hr) { if (tg.hr.lo) hLo = Math.min(hLo, tg.hr.lo); hHi = Math.max(hHi, tg.hr.hi); }
+  const selRow = sel != null ? rows[sel] : null;
+  const axis = { fontSize: 9, fill: "#94a3b8" };
+  return (
+    <div className="px-4 pt-1 pb-1">
+      <div className="flex items-center gap-2 mb-1 text-[10px]">
+        <span className="font-semibold" style={{ color: dark ? "#8ea0b5" : "#64748b" }}>{workSet ? "Arbeitsrunden" : "Runden"} im Verlauf</span>
+        {!tg.week && <span style={{ color: dark ? "#64748b" : "#94a3b8" }}>Kein Plan-Ziel für diesen Lauf</span>}
+      </div>
+      <div style={{ width: "100%", height: 120 }}><ResponsiveContainer>
+        <LineChart data={rows} margin={{ top: 16, right: 8, left: -4, bottom: 0 }} onClick={onPick}>
+          <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+          <XAxis dataKey="x" tick={hasHr ? false : axis} height={hasHr ? 4 : undefined} />
+          <YAxis reversed domain={[pLo - 8, pHi + 8]} tick={{ fontSize: 10, fill: "#94a3b8" }} tickFormatter={(v) => secToMMSS(v)} width={44} allowDecimals={false} />
+          <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
+          {tg.pace && <ReferenceArea y1={tg.pace - PACE_BAND_SEC} y2={tg.pace + PACE_BAND_SEC} fill="#8b5cf6" fillOpacity={dark ? 0.16 : 0.1} strokeOpacity={0} />}
+          {tg.pace && <ReferenceLine y={tg.pace} stroke="#8b5cf6" strokeDasharray="4 4" label={chipLabel(`Ziel ${secToMMSS(tg.pace)} ±${PACE_BAND_SEC}s`, "#7c3aed", dark, chipSide(paceVals, tg.pace, pHi - pLo + 16, "above"))} />}
+          {selRow && <ReferenceLine x={selRow.x} stroke={dark ? "#64748b" : "#94a3b8"} />}
+          <Line type="linear" dataKey="pace" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 3, fill: "#6366f1" }} isAnimationActive={false} />
+        </LineChart>
+      </ResponsiveContainer></div>
+      {hasHr && (
+        <div style={{ width: "100%", height: 104 }}><ResponsiveContainer>
+          <LineChart data={rows} margin={{ top: 14, right: 8, left: -4, bottom: 0 }} onClick={onPick}>
+            <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+            <XAxis dataKey="x" tick={axis} />
+            <YAxis domain={[Math.max(0, hLo - 6), hHi + 6]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={44} allowDecimals={false} />
+            <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
+            {tg.hr && tg.hr.lo && <ReferenceArea y1={tg.hr.lo} y2={tg.hr.hi} fill="#14b8a6" fillOpacity={dark ? 0.14 : 0.09} strokeOpacity={0} />}
+            {tg.hr && tg.hr.lo && <ReferenceLine y={tg.hr.hi} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel(`HF-Ziel ${tg.hrLabel}`, "#0d9488", dark, chipSide(hrVals, tg.hr.hi, hHi - hLo + 12, "above"))} />}
+            {tg.hr && !tg.hr.lo && <ReferenceLine y={tg.hr.hi} stroke="#e11d48" strokeDasharray="4 4" label={chipLabel(`max ${tg.hr.hi}`, "#e11d48", dark, chipSide(hrVals, tg.hr.hi, hHi - hLo + 12, "above"))} />}
+            {selRow && <ReferenceLine x={selRow.x} stroke={dark ? "#64748b" : "#94a3b8"} />}
+            <Line type="linear" dataKey="hr" stroke="#e11d48" strokeWidth={2.5} dot={{ r: 3, fill: "#e11d48" }} connectNulls isAnimationActive={false} />
+          </LineChart>
+        </ResponsiveContainer></div>
+      )}
+      {selRow && (
+        <div className="mt-1 text-[11px] font-num" style={{ color: dark ? "#aebccd" : "#475569" }}>
+          <b>{selRow.x}</b> · {secToMMSS(selRow.pace)}/km{selRow.hr ? ` · ${selRow.hr} bpm` : ""}
+          <span style={{ color: dark ? "#64748b" : "#94a3b8" }}> — antippen wechselt die Runde</span>
+        </div>
+      )}
+    </div>
+  );
+}
 // Splits v4: Runden-Liste statt Balkendiagramm. Jede Runde eine Zeile mit exakter Pace,
 // Abweichungsbalken relativ zum Ø Arbeit (links = schneller, rechts = langsamer) und HF.
 // Kein Achsen-/Kontrast-/Clipping-Risiko, exakte Werte direkt lesbar, 380px-tauglich.
@@ -1403,6 +1475,64 @@ function SplitsChart({ laps, run, illnessLog }) {
         })}
       </div>
     </div>
+  );
+}
+
+/* ==== v6.0: Fortschritt je Lauftyp — ersetzt den reinen Pace-Verlauf. Pace allein sagt wenig
+   (härter gearbeitet ≠ fitter); erst Arbeits-Pace UND Puls zusammen zeigen echte Ausdauer:
+   gleiche Pace bei weniger Puls = Fortschritt. Zwei X-synchrone Charts + feste Ablesezeile. ==== */
+function TypeProgressCharts({ series, target, hrTarget }) {
+  const dark = useDark();
+  const { sel, onPick } = usePairReadout(series.length);
+  const hasHr = series.filter((r) => r.hr != null).length >= 2;
+  const paceVals = series.map((r) => r.pace);
+  let pLo = Math.min(...paceVals), pHi = Math.max(...paceVals);
+  if (target) { pLo = Math.min(pLo, target - PACE_BAND_SEC); pHi = Math.max(pHi, target + PACE_BAND_SEC); }
+  const hrVals = series.filter((r) => r.hr != null).map((r) => r.hr);
+  let hLo = hrVals.length ? Math.min(...hrVals) : 0, hHi = hrVals.length ? Math.max(...hrVals) : 0;
+  const band = hrTarget ? hrTarget.band : null;
+  if (band) { if (band.lo) hLo = Math.min(hLo, band.lo); hHi = Math.max(hHi, band.hi); }
+  const selRow = sel != null ? series[sel] : null;
+  return (
+    <>
+      <div className="text-[10px] font-semibold" style={{ color: safeText(dark, "#4338ca") }}>Arbeits-Pace (niedriger = schneller)</div>
+      <div style={{ width: "100%", height: 140 }}><ResponsiveContainer>
+        <LineChart data={series} margin={{ top: 16, right: 8, left: -4, bottom: 0 }} onClick={onPick}>
+          <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+          <XAxis dataKey="date" tick={hasHr ? false : { fontSize: 9, fill: "#94a3b8" }} height={hasHr ? 4 : undefined} />
+          <YAxis reversed domain={[pLo - 8, pHi + 8]} tick={{ fontSize: 10, fill: "#94a3b8" }} tickFormatter={(v) => secToMMSS(v)} width={44} allowDecimals={false} />
+          <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
+          {target && <ReferenceArea y1={target - PACE_BAND_SEC} y2={target + PACE_BAND_SEC} fill="#8b5cf6" fillOpacity={dark ? 0.16 : 0.1} strokeOpacity={0} />}
+          {target && <ReferenceLine y={target} stroke="#8b5cf6" strokeDasharray="4 4" label={chipLabel(`Ziel ${secToMMSS(target)} ±${PACE_BAND_SEC}s`, "#7c3aed", dark, chipSide(paceVals, target, pHi - pLo + 16, "above"))} />}
+          {selRow && <ReferenceLine x={selRow.date} stroke={dark ? "#64748b" : "#94a3b8"} />}
+          <Line type="linear" dataKey="pace" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 3, fill: "#6366f1" }} isAnimationActive={false} />
+        </LineChart>
+      </ResponsiveContainer></div>
+      {hasHr && (
+        <>
+          <div className="text-[10px] font-semibold mt-1.5" style={{ color: safeText(dark, "#e11d48") }}>Ø-Puls des Abschnitts</div>
+          <div style={{ width: "100%", height: 104 }}><ResponsiveContainer>
+            <LineChart data={series} margin={{ top: 14, right: 8, left: -4, bottom: 0 }} onClick={onPick}>
+              <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
+              <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} />
+              <YAxis domain={[Math.max(0, hLo - 6), hHi + 6]} tick={{ fontSize: 10, fill: "#94a3b8" }} width={44} allowDecimals={false} />
+              <Tooltip content={() => null} cursor={{ stroke: dark ? "#3b4a63" : "#cbd5e1" }} />
+              {band && band.lo && <ReferenceArea y1={band.lo} y2={band.hi} fill="#14b8a6" fillOpacity={dark ? 0.14 : 0.09} strokeOpacity={0} />}
+              {band && band.lo && <ReferenceLine y={band.hi} stroke="#14b8a6" strokeDasharray="4 4" label={chipLabel(`HF-Ziel ${hrTarget.label}`, "#0d9488", dark, chipSide(hrVals, band.hi, hHi - hLo + 12, "above"))} />}
+              {band && !band.lo && <ReferenceLine y={band.hi} stroke="#e11d48" strokeDasharray="4 4" label={chipLabel(`max ${band.hi}`, "#e11d48", dark, chipSide(hrVals, band.hi, hHi - hLo + 12, "above"))} />}
+              {selRow && <ReferenceLine x={selRow.date} stroke={dark ? "#64748b" : "#94a3b8"} />}
+              <Line type="linear" dataKey="hr" stroke="#e11d48" strokeWidth={2.5} dot={{ r: 3, fill: "#e11d48" }} connectNulls isAnimationActive={false} />
+            </LineChart>
+          </ResponsiveContainer></div>
+        </>
+      )}
+      {selRow && (
+        <div className="mt-1 text-[11px] font-num" style={{ color: dark ? "#aebccd" : "#475569" }}>
+          <b>{selRow.date}</b> · {secToMMSS(selRow.pace)}/km{selRow.hr ? ` · ${selRow.hr} bpm` : ""}{selRow.basis ? ` · ${selRow.basis}` : ""}{selRow.fastest ? ` · schnellste ${secToMMSS(Math.round(selRow.fastest))}` : ""}
+          <span style={{ color: dark ? "#64748b" : "#94a3b8" }}> — antippen wechselt den Lauf</span>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -1530,8 +1660,15 @@ function RunProgress({ data, setData, currentWeek }) {
     });
   };
 
-  const series = useMemo(() => data.runLog.filter((r) => r.type === type).sort((a, b) => a.date.localeCompare(b.date)).map((r) => ({ date: fmtISOshort(r.date), pace: Math.round(effectivePace(r)) })), [data.runLog, type]); // Intervalle/Tempo: Arbeitsrunden-Pace
-  const target = targetPaceSec(type, effectiveWeek(currentWeek, data.illnessLog));
+  // v6.0: je Lauf der auswertungs-relevante Abschnitt (runEffort) — Pace UND Puls, für die Typ-Charts
+  const series = useMemo(() => data.runLog.filter((r) => r.type === type).sort((a, b) => a.date.localeCompare(b.date)).map((r) => {
+    const e = runEffort(r);
+    const fastest = r.type === "int" && r.laps ? (classifyLaps(r.laps) || {}).fastest : null;
+    return { date: fmtISOshort(r.date), pace: Math.round(e ? e.pace : r.pace), hr: e && e.hr ? Math.round(e.hr) : (r.hrAvg || null), basis: e ? e.basis : null, fastest: fastest || null };
+  }), [data.runLog, type]);
+  const effWNow = effectiveWeek(currentWeek, data.illnessLog);
+  const target = targetPaceSec(type, effWNow);
+  const hrTarget = hrTargetForType(type, effWNow);
   const list = [...data.runLog].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
   const economySeries = useMemo(() => data.runLog.filter((r) => r.cadence).sort((a, b) => a.date.localeCompare(b.date)).map((r) => ({ date: fmtISOshort(r.date), cadence: r.cadence, stride: r.strideLen ?? null })), [data.runLog]);
   // V3: Pace-HF-Verhältnis & VO2max-Schätzung — nur ruhige Läufe (Easy/Lang/Tempo-Block); Intervalle verzerren (HF-Trägheit)
@@ -1659,19 +1796,10 @@ function RunProgress({ data, setData, currentWeek }) {
         <button onClick={add} className="mt-3 w-full rounded-xl bg-indigo-600 text-white py-2.5 text-sm font-semibold flex items-center justify-center gap-1.5"><Plus size={16} /> Hinzufügen</button>
       </Card>
       <Card className="p-4">
-        <div className="flex items-center justify-between mb-1"><Eyebrow>Pace-Verlauf</Eyebrow><select value={type} onChange={(e) => setType(e.target.value)} className="text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg px-2 py-1 border-0">{RUN_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
-        <div className="text-[10px] text-slate-400 mb-2">niedriger = schneller</div>
+        <div className="flex items-center justify-between mb-1"><Eyebrow>Fortschritt je Lauftyp</Eyebrow><select value={type} onChange={(e) => setType(e.target.value)} className="text-xs font-semibold text-slate-600 bg-slate-100 rounded-lg px-2 py-1 border-0">{RUN_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></div>
+        <div className="text-[10px] text-slate-400 mb-2">Gleiche Pace bei weniger Puls (oder schneller bei gleichem Puls) = bessere Ausdauer{(target || hrTarget.band) ? ` · Band = Plan-Ziel (Woche ${effWNow})` : ""}</div>
         {series.length >= 2 ? (
-          <div style={{ width: "100%", height: 180 }}><ResponsiveContainer>
-            <LineChart data={series} margin={{ top: 5, right: 8, left: -4, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={gridCol(dark)} />
-              <XAxis dataKey="date" tick={{ fontSize: 10, fill: "#94a3b8" }} />
-              <YAxis reversed domain={["dataMin-8", "dataMax+8"]} tick={{ fontSize: 10, fill: "#94a3b8" }} tickFormatter={secToMMSS} width={46} />
-              <Tooltip formatter={(v) => [secToMMSS(v) + "/km", "Pace"]} {...tipProps(dark)} />
-              {target && <ReferenceLine y={target} stroke="#94a3b8" strokeDasharray="4 4" label={chipLabel("Ziel", "#64748b", dark, "below")} />}
-              <Line type="linear" dataKey="pace" stroke="#6366f1" strokeWidth={2.5} dot={{ r: 3, fill: "#6366f1" }} />
-            </LineChart>
-          </ResponsiveContainer></div>
+          <TypeProgressCharts key={type} series={series} target={target} hrTarget={hrTarget} />
         ) : <div className="py-8 text-center text-xs text-slate-400">Mind. 2 Einträge dieser Art für den Verlauf — importiere oben deine Garmin-CSV oder trag Läufe manuell ein.</div>}
       </Card>
 
@@ -1784,7 +1912,10 @@ function RunProgress({ data, setData, currentWeek }) {
                 {r.calories && <MiniBadge text={`${r.calories} kcal`} color="#7c3aed" />}
               </div>
             )}
-            {hasLaps && isOpen && <SplitsChart laps={r.laps} run={r} illnessLog={data.illnessLog} />}
+            {hasLaps && isOpen && <>
+              <RunDetailChart run={r} illnessLog={data.illnessLog} planEndMode={data.planEndMode} />
+              <SplitsChart laps={r.laps} run={r} illnessLog={data.illnessLog} />
+            </>}
           </div>
         );
       })}</Card>}
