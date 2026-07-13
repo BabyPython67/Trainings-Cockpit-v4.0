@@ -339,10 +339,12 @@ function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode, ov
     if (repsByDay[day]) items.push(...repsByDay[day]);
     items.forEach((it) => { const o = ov[it.uid]; if (o && o.status === "ausgefallen") { it.cancelled = true; it.load = 0; } });
     // v5.0: Krank-/Aufbau-Markierung — Einheiten bleiben sichtbar & abhakbar (uid unverändert), nur Empfehlung/Badge ändern sich
-    if (sickPhase === "sick") items.forEach((it) => { if (it.load > 0) { it.illness = "sick"; it.desc += " · Krank gemeldet — Pause empfohlen, höchstens sehr locker"; } });
+    // v6.0-Fix: Einheiten ohne desc (Volleyball) bekamen "undefined · …" — Anhängen jetzt defensiv
+    const addDesc = (it, txt) => { it.desc = it.desc ? `${it.desc} · ${txt}` : txt; };
+    if (sickPhase === "sick") items.forEach((it) => { if (it.load > 0) { it.illness = "sick"; addDesc(it, "Krank gemeldet — Pause empfohlen, höchstens sehr locker"); } });
     else if (sickPhase === "ramp") items.forEach((it) => {
-      if (it.sport === "run" && (it.type === "int" || it.type === "tempo")) { it.illness = "ramp"; it.desc += " · Aufbau nach Krankheit: locker statt hart laufen"; }
-      else if (it.sport === "strength") { it.illness = "ramp"; it.desc += " · Aufbau nach Krankheit: nur Mobility, nichts Schweres"; }
+      if (it.sport === "run" && (it.type === "int" || it.type === "tempo")) { it.illness = "ramp"; addDesc(it, "Aufbau nach Krankheit: locker statt hart laufen"); }
+      else if (it.sport === "strength") { it.illness = "ramp"; addDesc(it, "Aufbau nach Krankheit: nur Mobility, nichts Schweres"); }
     });
     if (items.length === 0) items.push({ uid: mkuid(day, "rest"), sport: "rest", label: "Ruhetag", dur: "Erholung", desc: day === "So" ? "Aktive Erholung optional: Spaziergang, Dehnen" : "Kein Training geplant", load: 0 });
     return { day, items, load: items.reduce((s, i) => s + (i.load || 0), 0) };
@@ -769,18 +771,20 @@ function SessionRow({ item, done, onToggle, onExpand, isOpen, extra }) {
     </button>
   );
   return (
-    <div className={`rounded-2xl bg-white border shadow-sm transition ${done ? "" : "border-slate-200/80"}`} style={done ? { borderColor: s.color + "66", background: softBg(dark, s.color, s.tint) } : {}}>
+    <div className={`rounded-2xl bg-white border shadow-sm transition ${done ? "" : "border-slate-200/80"}`} style={{ ...(done ? { borderColor: s.color + "66", background: softBg(dark, s.color, s.tint) } : {}), ...(item.cancelled ? { opacity: 0.6 } : {}) }}>
       <div className="p-3.5 flex items-center gap-3">
         <button onClick={checkable ? onToggle : undefined} disabled={!checkable} className={`flex items-center gap-3 flex-1 min-w-0 text-left ${checkable ? "active:scale-[0.99]" : ""} transition`}>
           <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: done ? s.color : softBg(dark, s.color, s.tint) }}><SportGlyph sport={item.sport} size={17} color={done ? "#fff" : undefined} /></div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className={`font-semibold text-sm ${done ? "line-through text-slate-400" : "text-slate-800"}`}>{item.label}{item.time ? <span className="font-num text-slate-500 font-medium"> · {item.time}</span> : ""}</span>
+              <span className={`font-semibold text-sm ${done || item.cancelled ? "line-through text-slate-400" : "text-slate-800"}`}>{item.label}{item.time ? <span className="font-num text-slate-500 font-medium"> · {item.time}</span> : ""}</span>
               {item.taper && <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">Taper</span>}
+              {item.cancelled && <span className="text-[10px] font-semibold text-slate-600 bg-slate-200 rounded px-1.5 py-0.5">Ausgefallen</span>}
+              {item.replacement && <span className="text-[10px] font-semibold text-violet-700 bg-violet-100 rounded px-1.5 py-0.5">Ersatz</span>}
               {item.illness === "sick" && <span className="text-[10px] font-semibold text-rose-700 bg-rose-100 rounded px-1.5 py-0.5">Krank</span>}
               {item.illness === "ramp" && <span className="text-[10px] font-semibold text-sky-700 bg-sky-100 rounded px-1.5 py-0.5">Aufbau</span>}
             </div>
-            <div className="text-xs text-slate-500">{item.dur} · {item.desc}</div>
+            <div className="text-xs text-slate-500">{[item.dur, item.cancelled ? "Training ausgefallen — zählt diese Woche nicht" : item.desc].filter(Boolean).join(" · ")}</div>
           </div>
         </button>
         {item.hr && <span className="font-num text-[11px] font-semibold text-slate-400 bg-slate-100 rounded-md px-1.5 py-1 shrink-0">HF {item.hr}</span>}
@@ -1012,9 +1016,9 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
           {inPlan && todayPlan
             ? todayPlan.items.map((it) => (
                 <SessionRow key={it.uid} item={it} done={!!data.done[it.uid]} onToggle={it.load > 0 ? () => toggleDone(it.uid) : undefined}
-                  onExpand={it.sport === "run" ? () => setOpenRun(openRun === it.uid ? null : it.uid) : undefined}
+                  onExpand={it.sport === "run" && !it.replacement ? () => setOpenRun(openRun === it.uid ? null : it.uid) : undefined}
                   isOpen={openRun === it.uid}
-                  extra={it.sport === "run" ? <GarminExport item={it} week={effectiveWeek(currentWeek, data.illnessLog)} /> : undefined}
+                  extra={it.sport === "run" && !it.replacement ? <GarminExport item={it} week={effectiveWeek(currentWeek, data.illnessLog)} /> : undefined}
                 />
               ))
             : <Card className="p-4 text-sm text-slate-500">Heute liegt außerhalb des 16-Wochen-Plans.</Card>}
@@ -1113,6 +1117,52 @@ function StrengthQuickLog({ item, setData }) {
   );
 }
 
+/* ==== v6.0: Volleyball-Ausfall + Ersatz-Einheit — im aufgeklappten Bereich der VB-Zeile (Woche-Tab) ==== */
+function VbAusfallPanel({ item, day, data, setData }) {
+  const ov = (data.overrides || {})[item.uid];
+  const rep = ov && ov.replacement ? ov.replacement : null;
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ day, sport: "run", label: "", dur: "", load: 4 });
+  const btn = "rounded-xl px-3 py-2 text-xs font-semibold border transition";
+  const markCancelled = () => setData((d) => ({ ...d, overrides: { ...(d.overrides || {}), [item.uid]: { status: "ausgefallen" } } }));
+  // Zurücknehmen räumt auch das Häkchen einer evtl. angelegten Ersatz-Einheit mit ab
+  const revert = () => { setShowForm(false); setData((d) => { const o = { ...(d.overrides || {}) }; delete o[item.uid]; const done = { ...d.done }; delete done[`${item.uid}-ersatz`]; return { ...d, overrides: o, done }; }); };
+  const openForm = () => { setForm(rep ? { day: rep.day, sport: rep.sport, label: rep.label || "", dur: rep.dur || "", load: rep.load || 4 } : { day, sport: "run", label: "", dur: "", load: 4 }); setShowForm(true); };
+  const saveRep = () => { setData((d) => ({ ...d, overrides: { ...(d.overrides || {}), [item.uid]: { status: "ausgefallen", replacement: { day: form.day, sport: form.sport, label: form.label.trim() || "Ersatz-Einheit", dur: form.dur.trim(), load: Number(form.load) || 4 } } } })); setShowForm(false); };
+  if (!item.cancelled) return <button onClick={markCancelled} className={`${btn} bg-white text-slate-600 border-slate-200`}>Training als ausgefallen markieren</button>;
+  return (
+    <div className="space-y-2.5">
+      {rep && !showForm && (
+        <div className="text-xs text-slate-600 flex items-center gap-1.5"><SportGlyph sport={rep.sport} size={13} /> Ersatz: <b>{rep.label}</b> · {DAY_FULL[rep.day]}{rep.dur ? ` · ${rep.dur}` : ""} · ⚡{rep.load}</div>
+      )}
+      {!showForm ? (
+        <div className="flex flex-wrap gap-2">
+          <button onClick={openForm} className={`${btn} text-white border-transparent`} style={{ background: "#7c3aed" }}>{rep ? "Ersatz bearbeiten" : "Ersatz-Einheit planen"}</button>
+          <button onClick={revert} className={`${btn} bg-white text-slate-600 border-slate-200`}>Ausfall zurücknehmen</button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="flex gap-1.5">{["run", "vb", "strength"].map((s) => (
+            <button key={s} onClick={() => setForm({ ...form, sport: s })} className={`flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-xs font-semibold border transition ${form.sport === s ? "text-white border-transparent" : "bg-white text-slate-600 border-slate-200"}`} style={form.sport === s ? { background: SPORT[s].color } : {}}>
+              <SportGlyph sport={s} size={13} color={form.sport === s ? "#fff" : undefined} /> {SPORT[s].label}
+            </button>
+          ))}</div>
+          <input placeholder="Was machst du stattdessen? (z. B. Lockerer Lauf, Techniktraining)" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} className="tc-input" />
+          <div className="flex gap-2">
+            <select value={form.day} onChange={(e) => setForm({ ...form, day: e.target.value })} className="tc-input" style={{ width: 96, flexShrink: 0 }}>{DAYS.map((d) => <option key={d} value={d}>{DAY_FULL[d]}</option>)}</select>
+            <input placeholder="Dauer (z. B. 30 Min)" value={form.dur} onChange={(e) => setForm({ ...form, dur: e.target.value })} className="tc-input" style={{ minWidth: 0 }} />
+            <select value={form.load} onChange={(e) => setForm({ ...form, load: Number(e.target.value) })} className="tc-input" style={{ width: 76, flexShrink: 0 }} aria-label="Belastung">{[1, 2, 3, 4, 5, 6, 7, 8, 9].map((l) => <option key={l} value={l}>⚡{l}</option>)}</select>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={saveRep} className={`${btn} flex-1 text-white border-transparent`} style={{ background: "#7c3aed" }}>Speichern</button>
+            <button onClick={() => setShowForm(false)} className={`${btn} flex-1 bg-white text-slate-600 border-slate-200`}>Abbrechen</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ===================== WOCHENPLAN ===================== */
 function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
   const dark = useDark();
@@ -1164,15 +1214,18 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
                 {d.load > 0 && <span className="ml-auto font-num text-[11px] text-slate-400 shrink-0">⚡{d.load}</span>}
               </div>
               <div className="px-3 pb-3 space-y-1.5">
-                {d.items.map((it) => (
-                  <SessionRow key={it.uid} item={it}
-                    done={!!data.done[it.uid]}
-                    onToggle={it.load > 0 ? () => toggleDone(it.uid) : undefined}
-                    onExpand={(it.ex && it.ex.length) || it.sport === "run" ? () => setOpen(open === it.uid ? null : it.uid) : undefined}
-                    isOpen={open === it.uid}
-                    extra={it.sport === "strength" && it.ex ? <StrengthQuickLog item={it} setData={setData} /> : it.sport === "run" ? <GarminExport item={it} week={effW} /> : undefined}
-                  />
-                ))}
+                {d.items.map((it) => {
+                  const isVbSlot = it.sport === "vb" && !it.tournament && !it.replacement; // nur echte Vereins-Slots können ausfallen
+                  return (
+                    <SessionRow key={it.uid} item={it}
+                      done={!!data.done[it.uid]}
+                      onToggle={it.load > 0 ? () => toggleDone(it.uid) : undefined}
+                      onExpand={(it.ex && it.ex.length) || (it.sport === "run" && !it.replacement) || isVbSlot ? () => setOpen(open === it.uid ? null : it.uid) : undefined}
+                      isOpen={open === it.uid}
+                      extra={it.sport === "strength" && it.ex ? <StrengthQuickLog item={it} setData={setData} /> : it.sport === "run" && !it.replacement ? <GarminExport item={it} week={effW} /> : isVbSlot ? <VbAusfallPanel item={it} day={d.day} data={data} setData={setData} /> : undefined}
+                    />
+                  );
+                })}
               </div>
             </Card>
           );
@@ -2852,6 +2905,10 @@ export default function App() {
         .tc-dark .bg-amber-400{background-color:#d97706!important;}
         .tc-dark .bg-sky-100{background-color:rgba(14,165,233,.22)!important;}
         .tc-dark .text-sky-700{color:#7dd3fc!important;}
+        .tc-dark .bg-slate-200{background-color:#243146!important;}
+        .tc-dark .bg-violet-100{background-color:rgba(124,58,237,.28)!important;}
+        .tc-dark .text-violet-700{color:#c4b5fd!important;}
+        .tc-dark .text-rose-500{color:#fb7185!important;}
       `}</style>
 
       <div className="tc-shell mx-auto">
