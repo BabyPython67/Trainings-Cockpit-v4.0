@@ -255,6 +255,104 @@ console.log("extractLaps: hrMax aus echter Garmin-CSV (v6.4)");
   });
 }
 
+console.log("v7.2: Kadenz/Schrittlänge pro Runde + Ausreißer-Erkennung über 'Zeit in Bewegung'");
+{
+  const parseSimpleCsv = (text) => {
+    const lines = text.trim().split(/\r?\n/);
+    const cells = (line) => line.slice(1, -1).split('","');
+    const header = cells(lines[0]);
+    return lines.slice(1).map((line) => Object.fromEntries(header.map((h, i) => [h, cells(line)[i]])));
+  };
+  const csv = readFileSync(new URL("./fixtures/activity_23580207957_easy1307.csv", import.meta.url), "utf8");
+  const laps = M.extractLaps(parseSimpleCsv(csv));
+  t("Ø Schrittfrequenz (Laufen)/Ø Schrittlänge werden pro Runde eingelesen (bislang nur aus der Gesamtzeile)", () => {
+    const r2 = laps.find((l) => l.lap === 2);
+    assert.equal(r2.cadence, 158);
+    assert.equal(r2.strideLen, 0.9);
+  });
+  t("echte Runden ohne nennenswerten Stopp: hasStop=false, Pace unverändert aus 'Zeit'", () => {
+    assert.ok(laps.every((l) => !l.hasStop), JSON.stringify(laps.filter((l) => l.hasStop)));
+  });
+}
+t("extractLaps: 'Zeit in Bewegung' deutlich unter Rundenzeit -> hasStop, Pace aus Bewegungszeit", () => {
+  const row = { "Abschnitttyp": "Laufen", "Runde": "5", "Distanz": "1.00", "Zeit": "8:00.0", "Zeit in Bewegung": "6:00.0" };
+  const [lap] = M.extractLaps([row]);
+  assert.equal(lap.hasStop, true);
+  assert.equal(lap.pace, 360); // 6:00 Bewegungszeit / 1 km, nicht 8:00 (Rundenzeit)
+});
+t("extractLaps: normale Abweichung (<10%) löst keinen Ausreißer aus", () => {
+  const row = { "Abschnitttyp": "Laufen", "Runde": "5", "Distanz": "1.00", "Zeit": "8:00.0", "Zeit in Bewegung": "7:20.0" };
+  const [lap] = M.extractLaps([row]);
+  assert.equal(lap.hasStop, false);
+  assert.equal(lap.pace, 480);
+});
+t("extractLaps: ohne 'Zeit in Bewegung'-Spalte (älterer Export) nie hasStop", () => {
+  const row = { "Abschnitttyp": "Laufen", "Runde": "5", "Distanz": "1.00", "Zeit": "8:00.0" };
+  const [lap] = M.extractLaps([row]);
+  assert.equal(lap.hasStop, false);
+  assert.equal(lap.pace, 480);
+});
+t("aggregateLaps: Ausreißer-Runde bleibt in Distanz/Dauer, fliegt aber aus HF-/Kadenz-Schnitt", () => {
+  const laps = [
+    { lap: 2, dist: 1, sec: 300, pace: 300, hr: 140, cadence: 160, strideLen: 1.0, hasStop: false },
+    { lap: 3, dist: 1, sec: 300, pace: 400, hr: 90, cadence: 100, strideLen: 0.5, hasStop: true }, // Ampel-Runde
+    { lap: 4, dist: 1, sec: 300, pace: 300, hr: 142, cadence: 162, strideLen: 1.02, hasStop: false },
+  ];
+  const a = M.aggregateLaps(laps);
+  assert.equal(a.dist, 3);
+  assert.equal(a.sec, 900); // Dauer bleibt die volle Rundenzeit, auch bei der Ampel-Runde
+  assert.equal(Math.round(a.pace * 100), Math.round(((300 + 400 + 300) / 3) * 100)); // Pace nutzt die (schon korrigierte) l.pace
+  assert.equal(a.hr, 141); // Ø nur aus Runde 2+4 — Runde 3 (Ampel) zählt nicht mit
+  assert.equal(a.cadence, 161);
+  assert.deepEqual(a.outliers, [3]);
+});
+t("runEffort (Intervalle): eine stopp-korrigierte, künstlich schnelle Pace darf die Arbeit/Pause-Einteilung nicht kippen", () => {
+  // 5 reale Intervall-Runden ~275-285 s/km (Screenshot-Fall 30.06.); Runde 6 hatte einen Ampel-Stopp und
+  // wurde dadurch auf eine unrealistisch schnelle Anzeige-Pace korrigiert (188 s/km) — ohne rawPace-Fix in
+  // classifyLaps würde sie fälschlich zum neuen Cluster-Bestwert und die 4 echten Arbeitsrunden als "Pause"
+  // einstufen (visuell im Browser reproduziert: "1× Arbeit" statt "5×").
+  const laps = [
+    { lap: 2, dist: 0.8, sec: 224, pace: 280, rawPace: 280, hr: 158, hasStop: false },
+    { lap: 4, dist: 0.8, sec: 221.6, pace: 277, rawPace: 277, hr: 162, hasStop: false },
+    { lap: 6, dist: 0.8, sec: 227.8, pace: 187.5, rawPace: 284.75, hr: 159, hasStop: true }, // Ampel-Stopp
+    { lap: 8, dist: 0.8, sec: 221.2, pace: 276.5, rawPace: 276.5, hr: 162, hasStop: false },
+    { lap: 10, dist: 0.8, sec: 226.7, pace: 283.4, rawPace: 283.4, hr: 170, hasStop: false },
+  ];
+  const eff = M.runEffort({ type: "int", laps, dist: 4, sec: 1121.3, pace: 280 });
+  assert.equal(eff.reps, 5, "alle 5 Runden müssen weiter als Arbeit erkannt werden");
+  assert.ok(eff.work.has(6), "Ampel-Runde bleibt Teil der Arbeit (nur ihre HF fliegt aus dem Schnitt)");
+});
+t("classifyLaps: dieselbe Ausschluss-Logik gilt für Arbeitsrunden bei Intervallen", () => {
+  const laps = [
+    { lap: 2, dist: 0.8, sec: 220, pace: 275, hr: 160, hasStop: false },
+    { lap: 3, dist: 0.15, sec: 120, pace: 800, hr: 130, hasStop: false }, // Erholung (langsam) — kein Arbeit
+    { lap: 4, dist: 0.8, sec: 280, pace: 300, hr: 100, hasStop: true }, // Arbeitsrunde (pace im Cluster) mit Ampel-Stopp
+  ];
+  const c = M.classifyLaps(laps);
+  assert.deepEqual(c.outliers, [4]);
+  assert.equal(c.hr, 160); // Runde 4 (Ampel) fließt nicht in den HF-Schnitt der Arbeitsrunden ein
+});
+t("lifetimeStats: Arbeitsdistanz/-zeit summieren runEffort() über alle Läufe", () => {
+  const runs = [
+    { id: "a", date: "2026-07-01", type: "easy", dist: 5, sec: 1800, pace: 360 }, // ohne Runden -> Rückfall auf Gesamt
+    { id: "b", date: "2026-07-02", type: "long", dist: 5, sec: 1800, pace: 360, laps: [
+      { lap: 2, dist: 1, sec: 300, pace: 300, hr: 140, hasStop: false },
+      { lap: 3, dist: 1, sec: 300, pace: 300, hr: 141, hasStop: false },
+    ] },
+  ];
+  const s = M.lifetimeStats(runs, {});
+  assert.equal(s.totalWorkKm, 7); // 5 (Rückfall) + 2 (Arbeitsabschnitt aus den Runden)
+  assert.equal(s.totalWorkSec, 1800 + 600);
+});
+t("pulseTrendRows: Ausreißer-Runde bleibt neutral statt fälschlich in/out bewertet zu werden", () => {
+  const rows = [
+    { lap: 2, hr: 145, hrMax: 150, isWork: true, isFirstWork: true, hasStop: false },
+    { lap: 3, hr: 90, hrMax: 95, isWork: true, isFirstWork: false, hasStop: true }, // Ampel — HF künstlich niedrig
+  ];
+  const out = M.pulseTrendRows(rows, "long", { lo: 140, hi: 155 });
+  assert.equal(out[1].status, "neutral"); // ohne den Fix wäre das fälschlich "out" (90 < 140)
+});
+
 console.log("hrPeakStatus (v6.4) — Peak-mit-Marge statt Durchschnitt, echte Werte aus dem Screenshot-Lauf");
 t("erste Arbeitsrunde immer neutral, unabhängig vom Wert", () => {
   assert.equal(M.hrPeakStatus(158, 178, true, { lo: 180, hi: 188 }), "neutral");
@@ -475,6 +573,9 @@ t("lifetimeStats: Summen, Rekorde, beste Woche", () => {
   // 30.06. (Di) und 04.07. (Sa) liegen in derselben Trainingswoche ab Mo 29.06.
   assert.equal(s.bestWeek.km, 12.3); // auf 1 Nachkommastelle gerundet
   assert.equal(s.bestWeek.monday, "2026-06-29");
+  // v7.2: ohne Runden-Import fällt runEffort() je Lauf auf dessen Gesamtwerte zurück — Arbeitssumme = Gesamtsumme
+  assert.equal(s.totalWorkKm, 17.3);
+  assert.equal(s.totalWorkSec, 1920 + 3478 + 2469);
 });
 t("fmtHours: Dezimalstunden, 1 Nachkommastelle (Nutzer-Wunsch statt h:mm)", () => {
   assert.equal(M.fmtHours(0), 0);

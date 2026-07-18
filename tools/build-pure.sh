@@ -20,7 +20,7 @@ export {
   classifyLaps, aggregateLaps, runEffort, schoolStatus, groupByFach,
   DEFAULT_DATA, DAYS, PLAN_START, TOTAL_WEEKS, PACE_BAND_SEC,
   applyTimeRange, decouplingPct, efMetersPerBeat, TIME_RANGES, runPlanProgress,
-  extractLaps, extractExtras, pickCol, hrPeakStatus, HR_PEAK_MARGIN_BPM,
+  extractLaps, extractExtras, pickCol, hrPeakStatus, HR_PEAK_MARGIN_BPM, STOP_RATIO_THRESHOLD,
   longestStreakInfo, planDoneDatesBySport, cumulativeRunKmDate, BADGE_CATALOG, BADGE_GROUPS,
   computeEarnedBadges, lifetimeStats, monthlyRunKm, pulseTrendRows, fmtHours, STRENGTH,
 };

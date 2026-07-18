@@ -1,4 +1,4 @@
-# Trainings-Cockpit v7.1
+# Trainings-Cockpit v7.2
 
 Volleyball · Laufen · Kraft · Schule · Kalender
 
@@ -49,9 +49,15 @@ Zweistufige Navigation: oben die Bereiche **Training**, **Kalender** und **Schul
   - **Gesamtstatistik**: Laufzeit als Dezimalstunden (z. B. „4.2 h") statt h:min, auf Nutzerwunsch.
   - **„Längste Wochen-Serie"-Abzeichen** zeigte bisher nur Titel + Datum, nie die tatsächlich erreichte Wochenzahl — jetzt steht sie sichtbar in der Kachel.
   - **Abzeichen-Icons** bekommen eine Ring-Eskalation: mit jeder einzelnen Stufe wachsen Zackenzahl (gedeckelt), Ringbreite, Glow und Farbsättigung sichtbar weiter — angelehnt an klassische Rang-/Prestige-Abzeichen, jede Stufe unterscheidet sich von der vorherigen.
+- v7.2 – Genauere Auswertung der Garmin-Rundendaten (Nutzer-Feedback):
+  - **Gesamtstatistik**: eigene Kachel-Zeile „Davon Arbeitsabschnitt" (Distanz + Laufzeit ohne Warm-up/Cool-down), gleich groß wie die Gesamt-Kacheln — bewusst nicht als kleine Unterzeile, sondern gleichwertig.
+  - **Übersichtszeile bei den Läufen**: Pace/Ø Puls/Kadenz zeigen jetzt konsequent den Arbeitsabschnitt statt den Gesamtschnitt inkl. Warm-up/Cool-down (Gesamt-Pace erscheint nur noch als kleiner Zusatz, wenn sie abweicht); Höhenmeter/Kalorien/Distanz/Gesamtzeit blieben unverändert aus der CSV-Übersichtszeile.
+  - **Ausreißer-Runden erkannt**: die bislang ungenutzte Spalte „Zeit in Bewegung" pro Runde deckt Stopps innerhalb einer Runde auf (z. B. Ampel). Betroffene Runden bekommen eine korrigierte Pace aus der Bewegungszeit statt der Rundenzeit, ihr Puls fließt nicht mehr in Durchschnittswerte (Pace-HF-Verhältnis, VO₂max, Drift-Kennzahl, Puls-Verlaufschart) ein — sichtbar markiert (● + Erklärzeile) statt kommentarlos verworfen.
+  - **Kadenz/Schrittlänge** werden jetzt zusätzlich pro Runde eingelesen (bisher nur aus der Gesamtzeile) und in der Laufökonomie-Karte auf den Arbeitsabschnitt umgestellt.
+  - Bugfix währenddessen gefunden: eine stopp-korrigierte, künstlich schnell wirkende Pace konnte bei Intervallen die Arbeit/Pause-Cluster-Erkennung kippen und echte Arbeitsrunden fälschlich als Pause einstufen — behoben, indem die Cluster-Erkennung auf der unkorrigierten Rundenzeit-Pace arbeitet, nicht auf der bereits korrigierten Anzeige-Pace.
 
 ## Dateien
 
 - `index.html` – fertige, ausgelieferte App (gebaut)
-- `Trainings-Cockpit-v7.1-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `Trainings-Cockpit-v7.2-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
 - `tools/` – Build-/Test-/Verifikations-Scripts, `workflows/ship-version.md` – Ablauf-SOP für neue Versionen

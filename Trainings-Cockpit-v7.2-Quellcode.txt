@@ -695,25 +695,42 @@ const lastNDates = (n) => { const t = todayISO(); return Array.from({ length: n 
 function classifyLaps(laps) {
   const usable = (laps || []).filter((l) => l.pace > 0 && ((l.dist || 0) >= 0.15 || (l.sec || 0) >= 45));
   if (usable.length < 2) return null;
-  const fastest = Math.min(...usable.map((l) => l.pace));
-  const work = usable.filter((l) => l.pace <= fastest * 1.12);
+  // v7.2: Cluster-Erkennung (Arbeit vs. Pause) läuft auf der UNKORRIGIERTEN Rundenzeit-Pace (rawPace), nicht
+  // auf der stopp-korrigierten Anzeige-Pace — sonst könnte eine per Ampel-Stopp künstlich "schnell" wirkende
+  // Runde fälschlich zum neuen Bestwert werden und die echten Arbeitsrunden aus dem Cluster werfen. Fällt
+  // ohne rawPace (ältere Aufrufer/Tests) auf pace zurück.
+  const fastest = Math.min(...usable.map((l) => l.rawPace ?? l.pace));
+  const work = usable.filter((l) => (l.rawPace ?? l.pace) <= fastest * 1.12);
   if (!work.length || work.length === usable.length) return null; // kein klarer Arbeit/Pause-Kontrast (z. B. gleichmäßiger Lauf)
   const dist = work.reduce((s, l) => s + (l.dist || 0), 0);
-  const sec = work.reduce((s, l) => s + (l.sec || (l.dist ? l.pace * l.dist : 0)), 0);
-  if (dist < 0.4 || !sec) return null;
-  const hrs = work.filter((l) => l.hr).map((l) => l.hr);
-  return { work, dist: Math.round(dist * 100) / 100, sec: Math.round(sec), pace: sec / dist, hr: hrs.length ? Math.round(hrs.reduce((a, b) => a + b, 0) / hrs.length) : null, reps: work.length, fastest, slowest: Math.max(...work.map((l) => l.pace)) };
+  const elapsedSec = work.reduce((s, l) => s + (l.sec || (l.dist ? l.pace * l.dist : 0)), 0);
+  if (dist < 0.4 || !elapsedSec) return null;
+  // v7.2: Pace-Summe aus l.pace*l.dist statt l.sec — bei per Stopp erkannten Runden (hasStop) steckt in
+  // l.pace bereits die um die Stehzeit korrigierte Pace (siehe extractLaps); die reine Zeit-Summe (elapsedSec,
+  // für Dauer-Angaben) bleibt unangetastet. HF fließt bei Stopp-Runden gar nicht erst in den Schnitt ein.
+  const paceSec = work.reduce((s, l) => s + (l.pace > 0 && l.dist ? l.pace * l.dist : (l.sec || 0)), 0);
+  const hrs = work.filter((l) => l.hr != null && !l.hasStop).map((l) => l.hr);
+  return { work, dist: Math.round(dist * 100) / 100, sec: Math.round(elapsedSec), pace: paceSec / dist, hr: hrs.length ? Math.round(hrs.reduce((a, b) => a + b, 0) / hrs.length) : null, reps: work.length, fastest, slowest: Math.max(...work.map((l) => l.pace)), outliers: work.filter((l) => l.hasStop).map((l) => l.lap) };
 }
-// Fasst einen Satz Runden zu einem Abschnitt zusammen (Distanz/Zeit/Pace/HF).
+// Fasst einen Satz Runden zu einem Abschnitt zusammen (Distanz/Zeit/Pace/HF/Kadenz).
 // extractLaps() liefert nur "Laufen"-Runden — Warm up/Cool Down sind hier also schon draußen.
 function aggregateLaps(laps) {
   const usable = (laps || []).filter((l) => l.pace > 0 && ((l.dist || 0) >= 0.15 || (l.sec || 0) >= 45));
   if (!usable.length) return null;
   const dist = usable.reduce((s, l) => s + (l.dist || 0), 0);
-  const sec = usable.reduce((s, l) => s + (l.sec || (l.dist ? l.pace * l.dist : 0)), 0);
-  if (dist < 0.4 || !sec) return null;
-  const hrs = usable.filter((l) => l.hr).map((l) => l.hr);
-  return { dist: Math.round(dist * 100) / 100, sec: Math.round(sec), pace: sec / dist, hr: hrs.length ? Math.round(hrs.reduce((a, b) => a + b, 0) / hrs.length) : null, reps: usable.length, work: new Set(usable.map((l) => l.lap)) };
+  const elapsedSec = usable.reduce((s, l) => s + (l.sec || (l.dist ? l.pace * l.dist : 0)), 0);
+  if (dist < 0.4 || !elapsedSec) return null;
+  // v7.2: siehe classifyLaps oben — Pace-Summe berücksichtigt die Stopp-Korrektur, Dauer nicht (ein kurzer
+  // Stopp bleibt Teil der Arbeitszeit, verzerrt aber nicht die Pace). HF/Kadenz/Schrittlänge einer per
+  // Stopp erkannten Runde fließen nicht in die Durchschnitte ein (Ampel-Steh-Puls würde sie nach unten ziehen).
+  const paceSec = usable.reduce((s, l) => s + (l.pace > 0 && l.dist ? l.pace * l.dist : (l.sec || 0)), 0);
+  const clean = usable.filter((l) => !l.hasStop);
+  const avgOf = (key, round) => { const vals = clean.filter((l) => l[key] != null).map((l) => l[key]); return vals.length ? Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * round) / round : null; };
+  return {
+    dist: Math.round(dist * 100) / 100, sec: Math.round(elapsedSec), pace: paceSec / dist,
+    hr: avgOf("hr", 1), cadence: avgOf("cadence", 1), strideLen: avgOf("strideLen", 100),
+    reps: usable.length, work: new Set(usable.map((l) => l.lap)), outliers: usable.filter((l) => l.hasStop).map((l) => l.lap),
+  };
 }
 // ZENTRAL: der auswertungs-relevante Abschnitt eines Laufs — Basis für Prognose, Pace-Chart,
 // Bestzeiten, Pace-HF/VO2max und Splits. Nutzt IMMER die Runden (nicht die verwässerte
@@ -912,6 +929,10 @@ function computeEarnedBadges(data, currentWeek, liveStreak) {
 function lifetimeStats(runLog, done) {
   const totalKm = Math.round(runLog.reduce((s, r) => s + (r.dist || 0), 0) * 10) / 10;
   const totalSec = runLog.reduce((s, r) => s + (r.sec || 0), 0);
+  // v7.2: Arbeitsabschnitt-Summe zusätzlich zur Gesamtdistanz/-zeit (ohne Warm-up/Cool-down) — nutzt
+  // dieselbe runEffort()-Logik wie der Rest der App, fällt ohne Runden auf den Gesamtwert des Laufs zurück.
+  const totalWorkKm = Math.round(runLog.reduce((s, r) => { const e = runEffort(r); return s + (e ? e.dist : (r.dist || 0)); }, 0) * 10) / 10;
+  const totalWorkSec = runLog.reduce((s, r) => { const e = runEffort(r); return s + (e ? e.sec : (r.sec || 0)); }, 0);
   const doneCount = Object.values(done || {}).filter(Boolean).length;
   let longest = null;
   runLog.forEach((r) => { if ((r.dist || 0) > 0 && (!longest || r.dist > longest.dist)) longest = r; });
@@ -924,7 +945,7 @@ function lifetimeStats(runLog, done) {
   runLog.forEach((r) => { if (r.dist) { const k = toLocalISO(mondayOf(new Date(r.date + "T12:00:00"))); weekKm[k] = (weekKm[k] || 0) + r.dist; } });
   let bestWeek = null;
   Object.entries(weekKm).forEach(([k, km]) => { if (!bestWeek || km > bestWeek.km) bestWeek = { monday: k, km: Math.round(km * 10) / 10 }; });
-  return { totalKm, totalSec, doneCount, runCount: runLog.length, longest, best5k: share(5), best10k: share(10), bestWeek };
+  return { totalKm, totalSec, totalWorkKm, totalWorkSec, doneCount, runCount: runLog.length, longest, best5k: share(5), best10k: share(10), bestWeek };
 }
 // Monats-Kilometer für den Gesamtstatistik-Balkenchart (lückenlos vom ersten Lauf-Monat bis heute)
 function monthlyRunKm(runLog, todayIso) {
@@ -1177,7 +1198,7 @@ function GesamtstatistikCard({ data, dark }) {
       <div className="flex items-center justify-between mb-2">
         <Eyebrow>Gesamtstatistik</Eyebrow>
         <InfoToggle label="Woher kommen die Zahlen?">
-          Alles live aus deinen Logs: Aktivitäten = alle abgehakten Einheiten (Laufen + Volleyball + Kraft), Distanz/Zeit aus den erfassten Läufen. „Anteilig" bei 5/10 km heißt: Zeitanteil eines längeren Laufs, kein separat gestopptes Teilstück — die App hat keine Sekundendaten.
+          Alles live aus deinen Logs: Aktivitäten = alle abgehakten Einheiten (Laufen + Volleyball + Kraft), Distanz/Zeit aus den erfassten Läufen. „Arbeit" darunter ist der reine Laufabschnitt ohne Warm-up/Cool-down (bei Läufen mit Runden-Import). „Anteilig" bei 5/10 km heißt: Zeitanteil eines längeren Laufs, kein separat gestopptes Teilstück — die App hat keine Sekundendaten.
         </InfoToggle>
       </div>
       {/* ohne Icons: drei Kacheln nebeneinander sind auf dem iPhone (390px) so schmal, dass selbst
@@ -1187,6 +1208,17 @@ function GesamtstatistikCard({ data, dark }) {
         <Stat label="Distanz" value={stats.totalKm} unit="km" accent="#0d9488" />
         <Stat label="Laufzeit" value={fmtHours(stats.totalSec)} unit="h" accent="#7c3aed" />
       </div>
+      {/* v7.2: Arbeitsabschnitt-Summen in eigener Zeile, gleich große Kacheln wie oben — auf Nutzerwunsch
+          genauso prominent wie die Gesamtwerte, nicht als kleine Unterzeile versteckt. */}
+      {(stats.totalWorkKm > 0 || stats.totalWorkSec > 0) && (
+        <div className="mt-2.5">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Davon Arbeitsabschnitt (ohne Warm-up/Cool-down)</div>
+          <div className="flex gap-2.5 flex-wrap">
+            <Stat label="Distanz" value={stats.totalWorkKm} unit="km" accent="#0d9488" />
+            <Stat label="Laufzeit" value={fmtHours(stats.totalWorkSec)} unit="h" accent="#7c3aed" />
+          </div>
+        </div>
+      )}
       {recs.length > 0 && (
         <div className="mt-2.5">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Persönliche Rekorde</div>
@@ -1856,6 +1888,9 @@ function extractExtras(row) {
   if (calories != null) out.calories = Math.round(calories);
   return out;
 }
+// v7.2: Anteil "Zeit in Bewegung" an der Rundenzeit, unter dem eine Runde als durch einen Stopp
+// verfälscht gilt (z. B. Ampel) — erster plausibler Wert, nicht empirisch abgesichert (wie HR_PEAK_MARGIN_BPM).
+const STOP_RATIO_THRESHOLD = 0.9;
 // Einzelne Runden/Splits aus dem Garmin-Rundenexport (nur echte Laufabschnitte, keine Warm-up/Cool-Down/Sammel-Zeilen)
 function extractLaps(rows) {
   const laps = [];
@@ -1872,8 +1907,24 @@ function extractLaps(rows) {
     // Rundendurchschnitt wird bei Intervallen durch die Anlaufzeit nach der Pause verwässert, der Peak
     // bildet die tatsächlich erreichte Anstrengung der Runde besser ab (siehe hrPeakStatus).
     const hrMax = numOrNull(pickCol(row, ["maximale herzfrequenz", "max heart", "max hf"]));
+    // v7.2: "Ø Schrittfrequenz (Laufen)"/"Ø Schrittlänge" pro Runde (bislang nur aus der Gesamt-Zusammenfassung
+    // gelesen, siehe extractExtras) sowie "Zeit in Bewegung" pro Runde (komplett ungenutzt) — dieselbe Lehre
+    // wie bei hrMax in v6.4: die CSV liefert mehr Spalten, als der Parser bisher nutzt. "Zeit in Bewegung"
+    // deutlich unter der Rundenzeit heißt: innerhalb der Runde wurde gestoppt (Ampel o. Ä.) — Pace/Puls/
+    // Schrittfrequenz der Runde sind dann verfälscht (siehe aggregateLaps/classifyLaps).
+    const cadence = numOrNull(pickCol(row, ["ø schrittfrequenz", "avg cadence", "average cadence"]));
+    const strideLen = numOrNull(pickCol(row, ["ø schrittlänge", "avg stride", "average stride"]));
+    const movSec = parseTimeToSec(pickCol(row, ["zeit in bewegung", "moving time"]));
     if (!dist || !sec) return;
-    laps.push({ lap: Number(runde), dist: Math.round(dist * 100) / 100, sec, pace: sec / dist, hr: hr != null ? Math.round(hr) : null, hrMax: hrMax != null ? Math.round(hrMax) : null });
+    const hasStop = !!(movSec && movSec / sec < STOP_RATIO_THRESHOLD);
+    const rawPace = sec / dist; // unkorrigierte Pace aus der Rundenzeit — Basis für die Arbeit/Pause-Cluster-Erkennung
+    const pace = hasStop ? movSec / dist : rawPace; // Anzeige-/Aggregations-Pace: bei Stopp aus Bewegungszeit
+    laps.push({
+      lap: Number(runde), dist: Math.round(dist * 100) / 100, sec, pace, rawPace,
+      hr: hr != null ? Math.round(hr) : null, hrMax: hrMax != null ? Math.round(hrMax) : null,
+      cadence: cadence != null ? Math.round(cadence) : null, strideLen: strideLen != null ? Math.round(strideLen * 100) / 100 : null,
+      hasStop,
+    });
   });
   return laps.sort((a, b) => a.lap - b.lap);
 }
@@ -1911,8 +1962,9 @@ function SplitsChart({ laps, run, illnessLog, planEndMode }) {
     const isWork = workSet ? workSet.has(l.lap) : true; // ohne eff (Easy/Lang): alles regulär
     const isFirstWork = isWork && !firstWorkSeen; // erste Arbeitsrunde: HF noch durch Anlauf gedrückt
     if (isWork) firstWorkSeen = true;
-    return { lap: l.lap, pace: l.pace, hr: l.hr, hrMax: l.hrMax, dist: l.dist, isWork, isFirstWork, dev: isWork ? l.pace - zeroRef : null };
+    return { lap: l.lap, pace: l.pace, hr: l.hr, hrMax: l.hrMax, dist: l.dist, isWork, isFirstWork, hasStop: !!l.hasStop, dev: isWork ? l.pace - zeroRef : null };
   });
+  const anyStop = rows.some((r) => r.hasStop);
   // Skala: größte Abweichung, mind. ±10 s (bzw. mind. der Zielbereich selbst, damit er nie über die
   // Spur hinausragt) — kleine Streuung wird NICHT künstlich aufgeblasen: ein konstanter Lauf soll
   // auch konstant aussehen.
@@ -1920,7 +1972,9 @@ function SplitsChart({ laps, run, illnessLog, planEndMode }) {
   const bandPct = target ? Math.min(PACE_BAND_SEC / maxDev, 1) * 50 : 0;
   const label = eff ? (run.type === "int" ? `${eff.reps}× Arbeit` : run.type === "tempo" ? "Tempo-Block" : "Lauf-Abschnitt") + ` Ø ${secToMMSS(Math.round(eff.pace))}/km` : `Ø ${secToMMSS(Math.round(refPace))}/km`;
   const muted = dark ? "#64748b" : "#94a3b8", strong = dark ? "#e2e8f0" : "#0f172a";
-  const workRows = rows.filter((r) => r.isWork && r.hr != null);
+  // v7.2: per Stopp erkannte Runden (Ampel o. Ä.) fließen nicht in die Drift-Kennzahl ein — der Puls
+  // während der Stehzeit verfälscht sie, siehe extractLaps/aggregateLaps.
+  const workRows = rows.filter((r) => r.isWork && r.hr != null && !r.hasStop);
   const decoupling = decouplingPct(workRows);
   return (
     <div className="px-4 pb-3 -mt-1">
@@ -1941,7 +1995,7 @@ function SplitsChart({ laps, run, illnessLog, planEndMode }) {
           return (
             <div key={r.lap} className="flex items-center gap-2" style={{ opacity: r.isWork ? 1 : 0.55 }}>
               <span className="w-6 shrink-0 text-[10px] font-num" style={{ color: muted }}>R{r.lap}</span>
-              <span className="w-11 shrink-0 text-xs font-num font-semibold" style={{ color: r.isWork ? strong : muted }}>{secToMMSS(Math.round(r.pace))}</span>
+              <span className="w-11 shrink-0 text-xs font-num font-semibold inline-flex items-baseline gap-0.5" style={{ color: r.isWork ? strong : muted }}>{secToMMSS(Math.round(r.pace))}{r.hasStop && <span style={{ color: "#f59e0b" }}>●</span>}</span>
               <div className="relative flex-1 h-3.5 rounded" style={{ background: dark ? "#1c2940" : "#f1f5f9" }}>
                 {target && <div className="absolute inset-y-0 rounded-sm" style={{ left: `${50 - bandPct}%`, width: `${bandPct * 2}%`, background: softBg(dark, "#8b5cf6", "#ede9fe") }} />}
                 <div className="absolute inset-y-0 left-1/2 w-px" style={{ background: dark ? "#3b4a63" : "#cbd5e1" }} />
@@ -1957,6 +2011,7 @@ function SplitsChart({ laps, run, illnessLog, planEndMode }) {
           );
         })}
       </div>
+      {anyStop && <div className="mt-1.5 text-[9.5px]" style={{ color: "#f59e0b" }}>● Stopp erkannt (z. B. Ampel) — Pace aus Bewegungszeit berechnet, Puls dieser Runde zählt nicht in die Durchschnittswerte.</div>}
       <PulseTrendChart rows={rows} runType={run.type} tg={tg} dark={dark} />
     </div>
   );
@@ -1972,7 +2027,9 @@ function pulseTrendRows(rows, runType, tgHr) {
   return rows.filter((r) => r.hr != null).map((r) => {
     const usePeak = isInt && r.isWork && r.hrMax != null;
     const plotHr = usePeak ? r.hrMax - HR_PEAK_MARGIN_BPM : r.hr;
-    const status = r.isWork ? hrPeakStatus(r.hr, isInt ? r.hrMax : null, r.isFirstWork, tgHr) : "neutral";
+    // v7.2: per Stopp erkannte Runden bleiben neutral (grau) statt fälschlich als "im Ziel"/"außerhalb"
+    // bewertet zu werden — derselbe Mechanismus wie bei der ersten Arbeitsrunde (isFirstWork).
+    const status = r.isWork && !r.hasStop ? hrPeakStatus(r.hr, isInt ? r.hrMax : null, r.isFirstWork, tgHr) : "neutral";
     return { ...r, plotHr, isPeak: usePeak, status, label: `R${r.lap}` };
   });
 }
@@ -2340,7 +2397,12 @@ function RunProgress({ data, setData, currentWeek }) {
   const target = targetPaceSec(type, effWNow);
   const hrTarget = hrTargetForType(type, effWNow);
   const list = [...data.runLog].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 8);
-  const economySeries = useMemo(() => data.runLog.filter((r) => r.cadence).sort((a, b) => a.date.localeCompare(b.date)).map((r) => ({ iso: r.date, date: fmtISOshort(r.date), type: r.type, cadence: r.cadence, stride: r.strideLen ?? null })), [data.runLog]);
+  // v7.2: Kadenz/Schrittlänge auf Arbeitsabschnitt umgestellt (wie Pace-HF/VO2max weiter unten) — ohne
+  // Runden-Import (manueller Eintrag, Aktivitätenliste) fällt runEffort() auf die Gesamtwerte zurück.
+  const economySeries = useMemo(() => data.runLog
+    .map((r) => { const e = runEffort(r); const cadence = e && e.cadence != null ? e.cadence : r.cadence; const stride = e && e.strideLen != null ? e.strideLen : (r.strideLen ?? null); return cadence ? { iso: r.date, date: fmtISOshort(r.date), type: r.type, cadence, stride } : null; })
+    .filter(Boolean)
+    .sort((a, b) => a.iso.localeCompare(b.iso)), [data.runLog]);
   // V3: Pace-HF-Verhältnis & VO2max-Schätzung — nur ruhige Läufe (Easy/Lang/Tempo-Block); Intervalle verzerren (HF-Trägheit)
   const hrMax = hrMaxTanaka(Number(data.nutrition?.profile?.age) || 18);
   // v7.0: Arbeitsabschnitt für ALLE Steady-Typen (nicht nur Tempo) — Gesamt-Pace/-HF inkl. Warm-up/
@@ -2505,15 +2567,23 @@ function RunProgress({ data, setData, currentWeek }) {
 
       {list.length > 0 && <Card className="divide-y divide-slate-100">{list.map((r) => {
         const hasLaps = r.laps && r.laps.length > 1;
-        const hasBadges = r.hrAvg || r.cadence || (r.elevGain != null && r.elevGain > 0) || r.calories;
+        // v7.2: Pace/Ø HF/Kadenz zeigen jetzt konsequent den Arbeitsabschnitt (wie SplitsChart/Fortschritt
+        // je Lauftyp), nicht mehr den Gesamt-Schnitt inkl. Warm-up/Cool-down — bei Läufen ohne Runden
+        // (manueller Eintrag, Aktivitätenliste) fällt runEffort() automatisch auf die Gesamtwerte zurück.
+        const eff = runEffort(r);
+        const dispPace = eff ? eff.pace : r.pace;
+        const dispHr = eff && eff.hr != null ? eff.hr : r.hrAvg;
+        const dispCadence = eff && eff.cadence != null ? eff.cadence : r.cadence;
+        const showTotalPace = Math.round(dispPace) !== Math.round(r.pace);
+        const hasBadges = dispHr || dispCadence || (r.elevGain != null && r.elevGain > 0) || r.calories;
         const isOpen = openRun === r.id;
         return (
           <div key={r.id}>
             <div className="flex items-center gap-3 px-4 py-2.5">
               <span className="text-[11px] text-slate-400 font-num w-12 shrink-0">{fmtISOshort(r.date)}</span>
-              <span className="text-xs font-semibold text-slate-700 w-20 shrink-0">{RUN_TYPE[r.type].label}{pbIds.has(r.id) && <span className="ml-1 text-[9px] font-bold text-amber-500 align-top">PB</span>}{r.imported && <span className="block text-[9px] font-medium text-indigo-400">Garmin</span>}{(() => { const ep = effectivePace(r); return Math.round(ep) !== Math.round(r.pace) ? <span className="block text-[9px] font-medium text-teal-600 font-num">Arbeit {secToMMSS(Math.round(ep))}/km</span> : null; })()}</span>
+              <span className="text-xs font-semibold text-slate-700 w-20 shrink-0">{RUN_TYPE[r.type].label}{pbIds.has(r.id) && <span className="ml-1 text-[9px] font-bold text-amber-500 align-top">PB</span>}{r.imported && <span className="block text-[9px] font-medium text-indigo-400">Garmin</span>}{showTotalPace && <span className="block text-[9px] font-medium text-slate-400 font-num">Gesamt {secToMMSS(Math.round(r.pace))}/km</span>}</span>
               <span className="font-num text-sm text-slate-800">{r.dist} km · {secToMMSS(r.sec)}</span>
-              <span className="font-num text-xs text-indigo-600 ml-auto">{secToMMSS(r.pace)}/km</span>
+              <span className="font-num text-xs text-indigo-600 ml-auto">{secToMMSS(Math.round(dispPace))}/km</span>
               {hasLaps && <button onClick={() => setOpenRun(isOpen ? null : r.id)} className="text-slate-400 p-1 shrink-0"><ChevronDown size={14} className={`transition-transform ${isOpen ? "rotate-180" : ""}`} /></button>}
               <button onClick={() => remove(r.id)} className="text-slate-300 shrink-0"><Trash2 size={14} /></button>
             </div>
@@ -2522,8 +2592,8 @@ function RunProgress({ data, setData, currentWeek }) {
                gestapelte, redundante Kopf-Chips erzeugen (Feedback: "voll/unübersichtlich"). */}
             {hasBadges && !isOpen && (
               <div className="flex flex-wrap gap-1.5 px-4 pb-2 -mt-1">
-                {r.hrAvg && <MiniBadge icon={<HeartPulse size={10} />} text={`Ø ${r.hrAvg} bpm`} color="#e11d48" />}
-                {r.cadence && <MiniBadge text={`${r.cadence} spm`} color="#0d9488" />}
+                {dispHr && <MiniBadge icon={<HeartPulse size={10} />} text={`Ø ${dispHr} bpm`} color="#e11d48" />}
+                {dispCadence && <MiniBadge text={`${dispCadence} spm`} color="#0d9488" />}
                 {r.elevGain != null && r.elevGain > 0 && <MiniBadge icon={<Mountain size={10} />} text={`+${r.elevGain} m`} color="#78350f" />}
                 {r.calories && <MiniBadge text={`${r.calories} kcal`} color="#7c3aed" />}
               </div>
@@ -3978,7 +4048,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400" style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))" }}>
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.1` : "Fortschritt wird automatisch gespeichert · v7.1"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.2` : "Fortschritt wird automatisch gespeichert · v7.2"}</span>
           </footer>
         </main>
       </div>
