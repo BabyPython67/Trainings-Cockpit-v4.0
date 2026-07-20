@@ -1,4 +1,4 @@
-# Trainings-Cockpit v7.11
+# Trainings-Cockpit v7.12
 
 Volleyball · Laufen · Kraft · Schule · Kalender
 
@@ -78,9 +78,16 @@ Bottom-Tab-Bar mit 5 Zielen: **Start** (Cockpit), **Woche**, ein erhöhter **Sch
   - **Zahlen stehen gerade** statt schräg (Nutzerwunsch) — die kursive Schriftauszeichnung auf der Banderole wurde entfernt.
   - **Sichtbare Variation innerhalb einer Stufe**: zwei Abzeichen derselben Stufe (z. B. 25 km und 50 km, beide Bronze) unterschieden sich bisher nur durch die Zahl — die Ringbreite folgt jetzt der Position innerhalb der eigenen Stufe (nicht mehr der Position über die ganze Leiter), sodass z. B. das zweite Bronze-Abzeichen einer Leiter einen sichtbar breiteren Ring hat als das erste.
   - **Dabei gefundener Geometrie-Bug behoben** (seit v7.7 unbemerkt): eine Variable, die die Breite des sichtbaren Metallrings steuern sollte, kontrollierte tatsächlich eine dahinterliegende, fast unsichtbare Rille — der echte Metallring war die ganze Zeit auf ~0,6px fixiert. Dadurch wirkten alle vier Stufen bisher überwiegend dunkel statt in ihrer Metallfarbe. Jetzt sauber getrennt: ein breiter, tier-farbiger Ring und eine dünne, konstante dunkle Trennlinie dahinter.
+- v7.12 – Komplette Neufassung der Hexagon-Medaille nach einem zweiten Design-Handoff (diesmal über Gemini), mit mehreren Feedback-Runden anhand von Vorab-Mustern:
+  - **Schlanker, konstant breiter Rahmen über alle Stufen** statt der v7.7-v7.11-Ringbreite, die sich je Rang veränderte — Nutzer-Feedback: das störte das Raster/die Proportionen.
+  - **Dunkles Zentrum unabhängig vom Theme** (kein "Plastikkörper"-Look mehr) und eine **vollständig innerhalb des Hexagons liegende Banderole** (die bisherigen Zacken-Formen an den Rändern sind entfallen) mit einer Zahl, die jetzt in der Rangfarbe (Bronze/Silber/Gold/Platin) statt schlicht weiß leuchtet.
+  - **2 statt 4 Ausbaustufen** je Metall-Rang: Level 1 bleibt schlicht, Level 2 (nur beim jeweils letzten Abzeichen einer eigenen Stufe) bekommt ein deutlich sichtbares zweites Metallband plus einen gefassten "Apex-Stein" mit Glanzpunkt an der oberen Spitze — vier Level pro Stufe gab es in keiner echten Abzeichen-Leiter zu befüllen (die meisten haben nur 1-3 Abzeichen je Stufe) und lösten sich bei 34px ohnehin nicht mehr auf.
+  - **Gesperrte Abzeichen** sehen jetzt wie echtes, mattes Stahl-Metall aus (eigener Grau-Verlauf, kein Glow, kein Kategorie-Icon-Farbton) statt nur als abgedunkelte Version der erreichten Farbe.
+  - **Ecken leicht abgerundet** und **Icons etwas größer** (weiteres Nutzer-Feedback zu den Vorab-Mustern).
+  - Mehrere in den Vorab-Mustern verworfene Ansätze: Eck-Kerben (wirkten wie beschädigte Kanten), Streifen-/Feingravur-Textur (bei jeder Größe kaum sichtbar), drei kleine Stern-Icons (wirkten wie Sticker) und eine externe Meter-Leiste zur Level-Anzeige (vom Nutzer explizit abgelehnt) — siehe `workflows/ship-version.md` für die daraus gezogenen Lehren.
 
 ## Dateien
 
 - `index.html` – fertige, ausgelieferte App (gebaut)
-- `Trainings-Cockpit-v7.11-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `Trainings-Cockpit-v7.12-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
 - `tools/` – Build-/Test-/Verifikations-Scripts, `workflows/ship-version.md` – Ablauf-SOP für neue Versionen

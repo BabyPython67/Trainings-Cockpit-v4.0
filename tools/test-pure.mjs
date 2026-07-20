@@ -576,16 +576,40 @@ t("glowAlpha steigt linear mit t, von 0.3 (Bronze-Anfang) bis 0.7 (Platin-Ende)"
   assert.equal(M.badgeMedalTier(0, 9).glowAlpha, 0.3);
   assert.equal(Math.round(M.badgeMedalTier(8, 9).glowAlpha * 100) / 100, 0.7);
 });
-t("ringT unterscheidet zwei Abzeichen DERSELBEN Stufe (v7.11-Fund: t allein tut das kaum)", () => {
-  const a = M.badgeMedalTier(0, 9), b = M.badgeMedalTier(1, 9);
-  assert.equal(a.tierIdx, b.tierIdx);
-  assert.ok(b.ringT > a.ringT, `ringT muss innerhalb der Stufe steigen: ${a.ringT} -> ${b.ringT}`);
+console.log("v7.12: 2 statt 4 Level je Stufe — level=2 nur für das letzte Abzeichen einer eigenen Metall-Stufe");
+t("echte Laufen-Leiter (9 Abzeichen, 25..1000km): level folgt den tatsächlichen Stufengrenzen", () => {
+  // Reale Stufeneinteilung (siehe Session-Nachweis): Bronze[25,50] Silber[100,150] Gold[200,300]
+  // Platin[500,750,1000] — nur das jeweils letzte Abzeichen jeder Stufe bekommt level 2.
+  const expected = [1, 2, 1, 2, 1, 2, 1, 1, 2]; // Index 0..8 = 25,50,100,150,200,300,500,750,1000 km
+  const got = expected.map((_, rank) => M.badgeMedalTier(rank, 9).level);
+  assert.deepEqual(got, expected, `Level-Zuordnung weicht ab: erwartet ${expected}, bekommen ${got}`);
 });
-t("ringT bleibt in [0,1], auch am Stufen-Ende und bei rankTotal===1", () => {
-  for (const [rank, total] of [[0, 9], [8, 9], [0, 1], [4, 9]]) {
-    const r = M.badgeMedalTier(rank, total).ringT;
-    assert.ok(r >= 0 && r <= 1, `ringT außerhalb [0,1] bei rank=${rank},total=${total}: ${r}`);
+t("Solo-Abzeichen in einer eigenen Stufe (z.B. Kraft-Silber mit nur 50 Einheiten) -> level 2", () => {
+  // strength-Leiter [10,25,50,75,100,150,200] (7 Einträge): Rang 2 (50 Einheiten) ist die einzige
+  // Silber-Stufe zwischen Bronze[10,25] und Gold[75,100] — muss trotzdem als "letztes der Stufe" gelten.
+  assert.equal(M.badgeMedalTier(2, 7).level, 2);
+});
+t("rankTotal===1 (einmalige Auszeichnung ohne Leiter) -> level 2", () => {
+  assert.equal(M.badgeMedalTier(0, 1).level, 2);
+});
+t("level ist immer 1 oder 2, nie etwas anderes", () => {
+  for (let rank = 0; rank < 9; rank++) assert.ok([1, 2].includes(M.badgeMedalTier(rank, 9).level));
+});
+
+console.log("v7.12: hexPath — abgerundetes Hexagon-clip-path bleibt ein geschlossener, gültiger Pfad");
+t("hexPath liefert einen mit M startenden, mit Z endenden SVG-Pfad ohne NaN", () => {
+  for (const [w, h] of [[34 * 0.9, 34 * 0.9], [140 * 0.9, 140 * 0.9], [92, 92]]) {
+    const d = M.hexPath(w, h);
+    assert.ok(d.startsWith("M "), `Pfad muss mit M beginnen: ${d.slice(0, 20)}`);
+    assert.ok(d.endsWith(" Z"), `Pfad muss mit Z enden: ${d.slice(-10)}`);
+    assert.ok(!d.includes("NaN"), `Pfad enthält NaN bei w=${w},h=${h}: ${d}`);
   }
+});
+t("hexPath bei sehr kleiner Kompakt-Boxgröße (34px-Badge-Ring) bleibt trotzdem gültig", () => {
+  // Kleinste real vorkommende Box: Ring bei size=34 (outerW=34*0.9=30.6) — Rundungsradius darf die
+  // Box nicht "auffressen" (v7.11-Lehre: an genau dieser Stelle steckte zuletzt ein Geometrie-Bug).
+  const d = M.hexPath(30.6, 30.6);
+  assert.ok(!d.includes("NaN") && d.startsWith("M ") && d.endsWith(" Z"));
 });
 t("MEDAL_TIERS hat genau 4 Stufen mit eindeutigen Labels (Bronze/Silber/Gold/Platin)", () => {
   assert.equal(M.MEDAL_TIERS.length, 4);

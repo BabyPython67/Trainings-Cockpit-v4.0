@@ -1139,109 +1139,137 @@ function BadgeGlyph({ icon, size = 15, color }) {
   const I = M[icon] || Trophy;
   return <I size={size} color={color} />;
 }
-// v7.7: Hexagon-Medaille (Garmin-Prinzip, Design-System-Handoff) ersetzt die v7.3-Formen-Eskalation
-// (Ring→Sechseck→Stern→Diamant). Die Metallfassung kodiert jetzt die Stufe (Bronze/Silber/Gold/Platin),
-// die farbige Facetten-Kachel kodiert die Kategorie — statt einer wechselnden Grundform in nur einer Farbe.
-// Vier am Mockup konkret bemängelte/gefundene Punkte wurden hier gefixt, siehe Kommentare in HexMedal
-// unten: Icon zu hoch (jetzt echte Hex-Mitte statt fixer Pixel-Offset), Metall-Kontrast zu schwach
-// (Fassungsring deutlich verbreitert + Stufen stärker auseinandergezogen), Zahl von der Kante verdeckt
-// (mittig im Band statt per Padding Richtung Hex-Spitze verschoben), Banderolen-Zacken wirkten random
-// (gleiche Rotation/Gradientenrichtung wie das Band, an dessen Rand verankert). Die Banderole selbst
-// bleibt wie im Mockup — kein Neuentwurf, nur diese vier Punkte.
-const HEX_CLIP = "polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)";
+// v7.12: komplette Neufassung nach einem zweiten Design-Handoff (diesmal über Gemini statt Claude
+// Design) — löst die v7.7-v7.11-Hexagon-Medaille ab. Kernkritik am Vorgänger: der Metallring wurde je
+// Rang/Stufe unterschiedlich BREIT (v7.7-v7.11-Ansatz), was Nutzer-Feedback zufolge das Raster/die
+// Proportionen störte. Jetzt bleibt der Ring über alle Stufen/Level exakt gleich schlank — Progression
+// läuft stattdessen über Rahmen-DETAILS (zweites Metallband + Apex-Stein), das Zentrum ist bewusst
+// unabhängig vom Theme dunkel (kein "Plastikkörper"-Look mehr), die Banderole liegt vollständig
+// innerhalb des Hexagons (keine Zacken-Formen mehr, die über mehrere Versionen hinweg gefiddelt werden
+// mussten) und die Zahl leuchtet in der Rang-(Metall-)Farbe statt schlicht weiß zu sein.
+// Ecken sind absichtlich leicht gerundet (Nutzer-Feedback "Ecken wirken spitz") — ein reines
+// clip-path:polygon() kann das nicht, deshalb wird jede der 6 Ecken durch zwei kurze Geradenstücke +
+// eine quadratische Kurve (Kontrollpunkt = Original-Eckpunkt) ersetzt, Standardtrick für "abgerundetes
+// Polygon". `hexClip` cacht nichts absichtlich nicht — die Badges sind klein an der Zahl, der Pfad wird
+// pro Aufruf frisch für die jeweilige Boxgröße berechnet (Ring/Zentrum/Facetten-Band haben unterschiedliche
+// Boxgrößen und brauchen deshalb je einen eigenen Pfad, nicht denselben Prozent-Wert wie beim alten
+// HEX_CLIP-Konstanten-Ansatz).
+function hexPath(w, h) {
+  const r = Math.min(w, h) * 0.11;
+  const pts = [[w * 0.5, 0], [w, h * 0.25], [w, h * 0.75], [w * 0.5, h], [0, h * 0.75], [0, h * 0.25]];
+  const n = pts.length, inPts = [], outPts = [];
+  for (let i = 0; i < n; i++) {
+    const prev = pts[(i - 1 + n) % n], cur = pts[i], next = pts[(i + 1) % n];
+    const dIn = [cur[0] - prev[0], cur[1] - prev[1]], lenIn = Math.hypot(dIn[0], dIn[1]);
+    const dOut = [next[0] - cur[0], next[1] - cur[1]], lenOut = Math.hypot(dOut[0], dOut[1]);
+    inPts.push([cur[0] - (dIn[0] / lenIn) * r, cur[1] - (dIn[1] / lenIn) * r]);
+    outPts.push([cur[0] + (dOut[0] / lenOut) * r, cur[1] + (dOut[1] / lenOut) * r]);
+  }
+  let d = `M ${outPts[n - 1][0].toFixed(2)},${outPts[n - 1][1].toFixed(2)}`;
+  for (let i = 0; i < n; i++) d += ` L ${inPts[i][0].toFixed(2)},${inPts[i][1].toFixed(2)} Q ${pts[i][0].toFixed(2)},${pts[i][1].toFixed(2)} ${outPts[i][0].toFixed(2)},${outPts[i][1].toFixed(2)}`;
+  return d + " Z";
+}
+function hexClip(w, h = w) { return `path('${hexPath(w, h)}')`; }
 const MEDAL_TIERS = [
-  // v7.10-Fix: Bronze war vorher nur eine hellere/blassere Variante von Golds Farbverlauf (beide warme
-  // Gelb-Braun-Töne, ähnliche Helligkeit am oberen Ende) — sollte aber als spürbar niedrigere/"billigere"
-  // Stufe lesbar sein, nicht nur als Gold-Abstufung. Jetzt echtes Kupfer-Bronze: rötlicher, matter,
-  // insgesamt dunkler/weniger leuchtend als Gold, auch am hellsten Punkt kein annähernd weißer Glanz mehr.
-  { key: "bronze", label: "Bronze", grad: "linear-gradient(140deg,#c9a876 0%,#a8672e 30%,#7a4a22 62%,#4a2e14 100%)" },
-  { key: "silber", label: "Silber", grad: "linear-gradient(140deg,#e4e9ef 0%,#b0b8c4 32%,#78828f 64%,#434b56 100%)" },
-  { key: "gold", label: "Gold", grad: "linear-gradient(140deg,#fff3c4 0%,#f0c04a 30%,#c8901c 62%,#8a5c0a 100%)" },
-  // v7.9-Fix: Platin war zuvor nur ein helleres Grau (kaum von Silber unterscheidbar) — jetzt ein
-  // eisig-blaues "Diamant"-Blau (Sky-Familie, im Rest der App bislang ungenutzt), das sich klar von
-  // Silbers neutralem Grau absetzt und in gängiger Rang-Bildsprache (Diamond-Rang) als "höchste Stufe"
-  // gelesen wird, ohne mit einer bestehenden Kategorie-/Akzentfarbe (Indigo/Teal/Amber/Rose/Violett) zu kollidieren.
-  { key: "platin", label: "Platin", grad: "linear-gradient(140deg,#ffffff 0%,#bae6fd 30%,#38bdf8 62%,#0369a1 100%)" },
+  // Grad-Werte (Metallverlauf) unverändert aus v7.9/v7.10 übernommen — die Bronze/Platin-Feinjustierung
+  // aus diesen Versionen bleibt gültig. `accent` (helles Facetten-Band + Apex-Stein, Level 2) sowie
+  // `num`/`numGlow` (Banderolen-Zahl leuchtet jetzt in Rangfarbe statt schlicht weiß) sind neu in v7.12.
+  { key: "bronze", label: "Bronze", grad: "linear-gradient(140deg,#c9a876 0%,#a8672e 30%,#7a4a22 62%,#4a2e14 100%)", accent: "#ffd9ab", num: "#f0a868", numGlow: "rgba(240,168,104,.65)" },
+  { key: "silber", label: "Silber", grad: "linear-gradient(140deg,#e4e9ef 0%,#b0b8c4 32%,#78828f 64%,#434b56 100%)", accent: "#ffffff", num: "#e7edf5", numGlow: "rgba(226,232,240,.6)" },
+  { key: "gold", label: "Gold", grad: "linear-gradient(140deg,#fff3c4 0%,#f0c04a 30%,#c8901c 62%,#8a5c0a 100%)", accent: "#ffe9a0", num: "#ffd76a", numGlow: "rgba(255,215,106,.7)" },
+  { key: "platin", label: "Platin", grad: "linear-gradient(140deg,#ffffff 0%,#bae6fd 30%,#38bdf8 62%,#0369a1 100%)", accent: "#e0f7ff", num: "#7dd3fc", numGlow: "rgba(125,211,252,.65)" },
 ];
-// Löst badgeTierStyle ab: statt eines kontinuierlichen Formen-Morphs jetzt ein diskreter Stufen-Index
-// (0=Bronze .. 3=Platin) aus der Rang-Position in der jeweiligen Abzeichen-Leiter. Rein und testbar
-// (siehe tools/test-pure.mjs) — t/isPeak/glowAlpha-Semantik bewusst wie in badgeTierStyle beibehalten.
+// tierIdx (0=Bronze..3=Platin) unverändert aus v7.7. `level` (neu, ersetzt das v7.11-`ringT`, das die
+// Ringbreite je Rang skalierte — genau das sollte laut Nutzer-Feedback ja NICHT mehr passieren): 2 statt
+// 4 Ausbaustufen, weil echte Leitern meist nur 1-3 Abzeichen je Metall-Stufe haben (4 unterscheidbare
+// Level pro Stufe gab es nirgends zu befüllen) und weil 4 Stufen bei 34px ohnehin nicht mehr auflösten.
+// level=2 nur für das jeweils LETZTE Abzeichen innerhalb seiner eigenen Stufe (auch bei einer
+// Solo-Stufe mit nur einem Abzeichen — das ist dann automatisch schon ihr eigener Höhepunkt), alle
+// davor bleiben level=1.
 function badgeMedalTier(rank, rankTotal) {
+  const tierIdxOf = (r) => {
+    const tt = rankTotal > 1 ? r / (rankTotal - 1) : 1;
+    return Math.min(3, Math.floor(tt * 4));
+  };
   const t = rankTotal > 1 ? rank / (rankTotal - 1) : 1;
-  const tierIdx = Math.min(3, Math.floor(t * 4));
+  const tierIdx = tierIdxOf(rank);
   const isPeak = (rankTotal > 1 && rank === rankTotal - 1) || rankTotal === 1;
-  // ringT: Position INNERHALB der eigenen Stufe (0=erstes Abzeichen der Stufe, nahe 1=letztes) —
-  // getrennt von `t` (Position über ALLE 4 Stufen hinweg), weil `t` zwischen zwei Abzeichen derselben
-  // Stufe kaum variiert (v7.11-Fund: zwei Bronze-Abzeichen sahen bis auf die Zahl identisch aus, weil
-  // die Ringbreite an `t` gekoppelt war). `ringT` treibt stattdessen die Ringbreite je Abzeichen.
-  const ringT = Math.min(1, Math.max(0, t * 4 - tierIdx));
-  return { t, ringT, tierIdx, isPeak, glowAlpha: 0.3 + t * 0.4 };
+  const isLastInTier = rank === rankTotal - 1 || tierIdxOf(rank + 1) !== tierIdx;
+  const level = isLastInTier ? 2 : 1;
+  return { t, tierIdx, isPeak, level, glowAlpha: 0.3 + t * 0.4 };
 }
 // Alle Maße als Anteil von `size` (Gesamtbreite) — dieselbe Formel trägt die 34px-Kompakt- wie die
-// 140px-Detail-Variante, keine zwei hart codierten Layouts.
-function HexMedal({ size, tierIdx, t = 0, ringT = 0, glowAlpha, earned, category, icon, metric, dark }) {
+// 140px-Detail-Variante, keine zwei hart codierten Layouts. `earned` steuert jetzt einen echten
+// Stil-Unterschied (mattes Graustahl-Metall, keine Kategorie-/Rangfarbe, kein Glow) statt nur die
+// gesamte Medaille pauschal per Opacity abzudunkeln (v7.7-v7.11-Ansatz) — Nutzer-Wunsch aus dem
+// Gemini-Handoff: gesperrte Abzeichen sollen "wie schweres, mattes Stahl" aussehen, nicht wie eine
+// blass durchscheinende Version der erreichten Farbe.
+function HexMedal({ size, tierIdx, level = 1, glowAlpha, earned, category, icon, metric }) {
   const tier = MEDAL_TIERS[tierIdx];
   const H = size * 1.16;
   const hexTop = size * 0.12;
   const outerW = size * 0.90;
-  // v7.11-Fix (Geometrie-Bug): die Variable, die bisher "ringW" hieß, bestimmte gar nicht die Breite
-  // des sichtbaren Metallrings, sondern die der dunklen Rille dahinter — der eigentliche Metallring war
-  // durchgehend nur `rilleGap` breit (≈0,6px bei Kompakt-Größe, praktisch unsichtbar). Dadurch wirkten
-  // alle Stufen überwiegend dunkel/schwarz statt in ihrer Metallfarbe, und die v7.11-Rang-Skalierung
-  // hätte nur die unsichtbare Rille verbreitert, nicht den Ring. Jetzt sauber benannt und vertauscht:
-  // `metalRingW` ist der breite, sichtbare Metallring, `grooveW` ist die dünne, konstante dunkle
-  // Trennlinie zwischen Ring und Facetten-Kachel.
-  // Ringbreite folgt `ringT` (Position INNERHALB der eigenen Stufe), nicht `t` (Position über alle 4
-  // Stufen) — sonst unterscheiden sich zwei Abzeichen derselben Stufe (z. B. 25km/50km, beide Bronze)
-  // optisch kaum, weil `t` zwischen ihnen nur minimal wandert (v7.11-Fund, Nutzer-Feedback).
-  const metalRingW = Math.max(size * (0.09 + ringT * 0.09), 2.5);
-  const grooveW = Math.max(size * 0.02, 1);
-  const rilleW = outerW - 2 * metalRingW;
-  const innerW = rilleW - 2 * grooveW;
-  const innerLeft = (size - innerW) / 2;
-  const innerTop = hexTop + metalRingW + grooveW;
-  const ribbonCenterY = hexTop + outerW * 0.70; // im breitesten Hex-Bereich (25–75% der Hex-Höhe), nicht nahe der unteren Spitze
-  const ribbonH = size * 0.20;
-  const ribbonW = innerW * 1.15;
-  // v7.9-Fix: Icon saß bei der echten Hex-Mitte + halber Kacheln-Breite so weit unten, dass es das
-  // Banderolen-Band überlappte (rechnerisch bestätigt: Icon-Unterkante lag unterhalb der Band-Oberkante).
-  // Jetzt Zentrum + Größe so bemessen, dass die Icon-Unterkante immer oberhalb der Band-Oberkante bleibt,
-  // bei Kompakt- wie Detail-Größe gleichermaßen (beides Anteile von hexTop/outerW/innerW, kein Fixwert).
-  const iconCenterY = hexTop + outerW * 0.40;
-  const iconSize = innerW * 0.40;
-  const foldW = size * 0.09, foldH = size * 0.16;
-  // v7.11-Fix: Zahl auf der Banderole wurde bei mehrstelligen Werten (z. B. "1000") in der Kompakt-
-  // Größe abgeschnitten — der alte `Math.max(size*0.15, 8)`-Mindestwert erzwang eine 8px-Schrift, die
-  // bei 34px-Badges breiter war als der verfügbare Platz auf dem Band. Jetzt an die Ziffernzahl UND
-  // die tatsächliche Bandbreite gekoppelt, ohne aufblähenden Mindestwert.
+  const ringW = Math.max(size * 0.095, 3.2);
+  const accentW = ringW * 0.4; // Level 2: zweites, deutlich sichtbares Metallband statt Haarlinien-Inlay
+  const innerW = outerW - 2 * ringW;
+  const innerLeft = (size - innerW) / 2, innerTop = hexTop + ringW;
+  const ringClip = hexClip(outerW);
+  const ringBg = earned ? tier.grad : "linear-gradient(140deg,#6b7280 0%,#4b5563 45%,#293040 100%)";
+  const iconColor = earned ? category.color : "#64748b";
+  const numColor = earned ? tier.num : "#64748b";
+  const numGlow = earned ? `0 0 ${size * 0.09}px ${tier.numGlow}` : "none";
+  const iconGlow = earned ? `drop-shadow(0 0 ${size * 0.06}px ${category.color}99)` : "none";
+  const accentColor = earned ? tier.accent : "rgba(255,255,255,.22)";
+  const ribbonW = innerW * 0.98;
+  // v7.11-Lehre weiterhin gültig: Schriftgröße ziffernzahl-abhängig statt fester Mindestwert, sonst
+  // klemmt "1000" in der Kompakt-Größe wieder in der Banderole.
   const metricStr = metric != null ? String(metric) : "";
-  const metricFitSize = metricStr.length ? (innerW * 0.82) / (metricStr.length * 0.62) : size * 0.15;
-  const metricFontSize = Math.max(4, Math.min(size * 0.15, metricFitSize));
+  const metricFitSize = metricStr.length ? (ribbonW * 0.78) / (metricStr.length * 0.62) : size * 0.14;
+  const metricFontSize = Math.max(4, Math.min(size * 0.14, metricFitSize));
+  const glowBox = outerW + size * 0.08;
   return (
-    <div style={{ position: "relative", width: size, height: H, opacity: earned ? 1 : 0.45 }}>
-      <div style={{ position: "absolute", left: size * 0.05, top: hexTop, width: outerW, height: outerW, clipPath: HEX_CLIP, background: `radial-gradient(circle, ${category.color}77 0%, transparent 70%)`, filter: `blur(${Math.max(size * (0.03 + t * 0.03), 1.5)}px)`, opacity: glowAlpha, animation: earned ? "badgeGlowPulse 2.4s ease-in-out infinite" : "none" }} />
-      <div style={{ position: "absolute", left: size * 0.05, top: hexTop, width: outerW, height: outerW, clipPath: HEX_CLIP, background: tier.grad, boxShadow: "inset 0 2px 2px rgba(255,255,255,.6), inset 0 -6px 9px -3px rgba(0,0,0,.45)" }} />
-      <div style={{ position: "absolute", left: size * 0.05 + metalRingW, top: hexTop + metalRingW, width: rilleW, height: rilleW, clipPath: HEX_CLIP, background: dark ? "#0b0f1a" : "#20262e" }} />
-      <div style={{ position: "absolute", left: innerLeft, top: innerTop, width: innerW, height: innerW, clipPath: HEX_CLIP, background: category.color, overflow: "hidden" }}>
-        <div style={{ position: "absolute", inset: 0, background: `repeating-linear-gradient(125deg, rgba(255,255,255,0) 0 ${Math.max(innerW * 0.1, 2)}px, rgba(255,255,255,.08) ${Math.max(innerW * 0.1, 2)}px ${Math.max(innerW * 0.2, 4)}px)` }} />
-        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(135deg, rgba(255,255,255,.35) 0%, rgba(255,255,255,0) 45%)" }} />
-        {earned && <div style={{ position: "absolute", top: "-30%", left: "-45%", width: "30%", height: "200%", background: "linear-gradient(100deg, transparent 0%, rgba(255,255,255,.75) 50%, transparent 100%)", animation: "badgeShine 2.8s ease-in-out infinite" }} />}
+    <div style={{ position: "relative", width: size, height: H }}>
+      {earned && (
+        <div style={{ position: "absolute", left: size * 0.05 - size * 0.04, top: hexTop - size * 0.04, width: glowBox, height: glowBox, clipPath: hexClip(glowBox), background: `radial-gradient(circle, ${category.color}66 0%, transparent 72%)`, filter: `blur(${Math.max(size * 0.07, 2)}px)`, opacity: glowAlpha, animation: "badgeGlowPulse 2.4s ease-in-out infinite" }} />
+      )}
+      <div style={{ position: "absolute", left: size * 0.05, top: hexTop, width: outerW, height: outerW, clipPath: ringClip, background: ringBg, boxShadow: earned ? "inset 0 1.5px 1.5px rgba(255,255,255,.55), inset 0 -4px 6px -2px rgba(0,0,0,.45)" : "none" }} />
+      {earned && <div style={{ position: "absolute", left: size * 0.05, top: hexTop, width: outerW, height: outerW, clipPath: ringClip, background: "linear-gradient(115deg,transparent 30%,rgba(255,255,255,.35) 46%,transparent 62%)", mixBlendMode: "screen" }} />}
+      {level >= 2 && (() => {
+        const accentBox = outerW - 2 * (ringW - accentW);
+        const accentGrad = earned
+          ? `linear-gradient(140deg,#ffffff 0%,${accentColor} 45%,${accentColor} 75%,rgba(0,0,0,.25) 100%)`
+          : "linear-gradient(140deg,#94a3b8 0%,#64748b 60%,#3f4b5c 100%)";
+        return <div style={{ position: "absolute", left: size * 0.05 + ringW - accentW, top: hexTop + ringW - accentW, width: accentBox, height: accentBox, clipPath: hexClip(accentBox), background: accentGrad, boxShadow: earned ? "inset 0 1px 1px rgba(255,255,255,.5), inset 0 -2px 3px rgba(0,0,0,.35)" : "none" }} />;
+      })()}
+      {/* Zentrum bewusst theme-unabhängig dunkel (kein "Plastikkörper"-Look, s. Kommentar oben) */}
+      <div style={{ position: "absolute", left: innerLeft, top: innerTop, width: innerW, height: innerW, clipPath: hexClip(innerW), background: "linear-gradient(165deg,#232c42 0%,#0d1117 75%)", overflow: "hidden" }}>
+        {earned && <div style={{ position: "absolute", left: "50%", top: innerW * 0.38, width: innerW * 0.7, height: innerW * 0.7, transform: "translate(-50%,-50%)", background: `radial-gradient(circle, ${category.color}55 0%, transparent 70%)` }} />}
       </div>
-      {/* Banderolen-Zacken: gleiche (jetzt waagerechte) Ausrichtung/Gradientenrichtung wie das Band,
-          an dessen Rand verankert (v7.7-Fix, Rotation in v7.9 entfernt — s. Band unten) */}
-      <div style={{ position: "absolute", left: innerLeft - foldW * 0.55, top: ribbonCenterY - foldH / 2, width: foldW, height: foldH, background: tier.grad, clipPath: "polygon(0 0,100% 0,100% 100%,0 100%,45% 50%)", boxShadow: "0 2px 4px rgba(0,0,0,.35)" }} />
-      <div style={{ position: "absolute", left: innerLeft + innerW - foldW * 0.45, top: ribbonCenterY - foldH / 2, width: foldW, height: foldH, background: tier.grad, clipPath: "polygon(0 0,100% 0,55% 50%,100% 100%,0 100%)", boxShadow: "0 2px 4px rgba(0,0,0,.35)" }} />
-      {/* Banderolen-Band: hinter der Medaille geclippt (Hex-clip-path + contain:paint); Zahl mittig im
-          breitesten Hex-Bereich statt per Padding Richtung Spitze verschoben (v7.7-Fix: Zahl war verdeckt).
-          v7.9: waagerecht statt schräg gestellt (Nutzerwunsch), bleibt weiterhin sicher innerhalb der
-          Hex-Klammer, weil die Bandmitte in der breitesten Hex-Zone (25–75% Höhe) liegt. */}
-      <div style={{ position: "absolute", left: (size - ribbonW) / 2, top: ribbonCenterY - ribbonH / 2, width: ribbonW, height: ribbonH, clipPath: HEX_CLIP, overflow: "hidden", contain: "paint" }}>
-        <div style={{ position: "absolute", left: (ribbonW - innerW) / 2, top: 0, width: innerW, height: ribbonH, background: tier.grad, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "inset 0 2px 1px rgba(255,255,255,.5), inset 0 -3px 4px rgba(0,0,0,.3)" }}>
-          {metric != null && <span style={{ fontFamily: "'Space Grotesk',monospace", fontWeight: 800, fontSize: metricFontSize, color: "#fff", textShadow: "0 1px 2px rgba(0,0,0,.4)", whiteSpace: "nowrap" }}>{metric}</span>}
-        </div>
+      {level >= 2 && (() => {
+        const gemSize = Math.max(ringW * 0.95, 5);
+        const gemY = hexTop + ringW * 0.5 - gemSize / 2;
+        const gemColor = earned ? accentColor : "#94a3b8";
+        const rimColor = earned ? "rgba(0,0,0,.4)" : "#475569";
+        const sparkSize = gemSize * 0.55;
+        return (
+          <>
+            <div style={{ position: "absolute", left: size / 2 - gemSize / 2, top: gemY, width: gemSize, height: gemSize, borderRadius: "50%", background: `radial-gradient(circle at 32% 26%, #ffffff 0%, ${gemColor} 40%, ${rimColor} 100%)`, boxShadow: "inset 0 1px 1.5px rgba(0,0,0,.6), 0 0.5px 0 rgba(255,255,255,.55)", filter: earned ? `drop-shadow(0 0 ${size * 0.045}px ${gemColor}cc)` : "none" }} />
+            {earned && (
+              <div style={{ position: "absolute", left: size / 2 - gemSize * 0.32, top: gemY + gemSize * 0.06, width: sparkSize, height: sparkSize, opacity: 0.9 }}>
+                <svg width={sparkSize} height={sparkSize} viewBox="0 0 10 10"><path d="M5 0 L5.9 4.1 L10 5 L5.9 5.9 L5 10 L4.1 5.9 L0 5 L4.1 4.1 Z" fill="#ffffff" /></svg>
+              </div>
+            )}
+          </>
+        );
+      })()}
+      <div style={{ position: "absolute", left: "50%", top: innerTop + innerW * 0.42, transform: "translate(-50%,-50%)", filter: iconGlow }}>
+        <BadgeGlyph icon={icon} size={innerW * 0.42} color={iconColor} />
       </div>
-      <div style={{ position: "absolute", left: "50%", top: iconCenterY, transform: "translate(-50%,-50%)", filter: "drop-shadow(0 2px 3px rgba(0,0,0,.4))" }}>
-        <BadgeGlyph icon={icon} size={iconSize} color="#fff" />
+      {/* Banderole vollständig innerhalb des Hexagons (keine Zacken-Formen mehr, s. Kommentar oben);
+          anthrazit statt Rang-Metallfarbe, damit sie sich sichtbar davon abhebt; Zahl leuchtet in der
+          Rangfarbe (numColor/numGlow). */}
+      <div style={{ position: "absolute", left: "50%", top: innerTop + innerW * 0.68, width: ribbonW, height: size * 0.19, transform: "translateX(-50%)", background: "linear-gradient(180deg,#1c2029,#0a0c11)", borderRadius: Math.max(size * 0.02, 2), boxShadow: "0 1px 0 rgba(255,255,255,.06) inset, 0 2px 4px rgba(0,0,0,.4)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        {metric != null && <span style={{ fontFamily: "'Space Grotesk',monospace", fontWeight: 800, fontSize: metricFontSize, color: numColor, textShadow: numGlow, whiteSpace: "nowrap" }}>{metric}</span>}
       </div>
     </div>
   );
@@ -1251,12 +1279,12 @@ function HexMedal({ size, tierIdx, t = 0, ringT = 0, glowAlpha, earned, category
 function BadgeTile({ badge, isNext, dark, size = 34, onSelect }) {
   const g = BADGE_GROUPS[badge.group];
   const pct = badge.target && badge.current != null ? Math.min(100, (badge.current / badge.target) * 100) : 0;
-  const { tierIdx, t, ringT, glowAlpha } = badgeMedalTier(badge.rank || 0, badge.rankTotal || 1);
+  const { tierIdx, level, glowAlpha } = badgeMedalTier(badge.rank || 0, badge.rankTotal || 1);
   const metric = badge.target == null && badge.unit && badge.current > 0 ? Math.round(badge.current * 10) / 10
     : badge.earned ? (badge.target != null ? badge.target : null) : null;
   return (
     <button type="button" onClick={() => onSelect && onSelect(badge)} className="p-2 flex flex-col items-center text-center gap-1 min-w-0" style={{ borderRadius: RADIUS.tile, background: badge.earned ? softBg(dark, g.color, g.color + "14") : dark ? "#141b2c" : "#f8fafc", opacity: badge.earned || isNext ? 1 : 0.5 }}>
-      <HexMedal size={size} tierIdx={tierIdx} t={t} ringT={ringT} glowAlpha={glowAlpha} earned={badge.earned} category={g} icon={badge.icon} metric={metric} dark={dark} />
+      <HexMedal size={size} tierIdx={tierIdx} level={level} glowAlpha={glowAlpha} earned={badge.earned} category={g} icon={badge.icon} metric={metric} />
       <div className="text-[9.5px] font-semibold leading-tight" style={{ color: badge.earned ? safeText(dark, g.color) : dark ? "#94a3b8" : "#64748b" }}>{badge.title}</div>
       {/* v7.0: Abzeichen ohne festes Ziel (z. B. "Längste Wochen-Serie") zeigten bisher nur Titel +
           Datum, nie die tatsächlich erreichte Zahl — Titel allein war ohne Bezug (Nutzer-Feedback). */}
@@ -1276,12 +1304,12 @@ function BadgeTile({ badge, isNext, dark, size = 34, onSelect }) {
 function BadgeDetailModal({ badge, dark, onClose }) {
   if (!badge) return null;
   const g = BADGE_GROUPS[badge.group];
-  const { tierIdx, t, ringT, glowAlpha } = badgeMedalTier(badge.rank || 0, badge.rankTotal || 1);
+  const { tierIdx, level, glowAlpha } = badgeMedalTier(badge.rank || 0, badge.rankTotal || 1);
   const metric = badge.target != null ? (badge.earned ? badge.target : Math.round(badge.current || 0)) : (badge.current > 0 ? Math.round(badge.current * 10) / 10 : null);
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(2,6,23,0.55)" }} onClick={onClose}>
       <div className="p-5 w-full max-w-xs text-center shadow-xl" style={{ borderRadius: RADIUS.hero, background: dark ? "#161d2e" : "#ffffff" }} onClick={(e) => e.stopPropagation()}>
-        <div className="flex justify-center mb-3"><HexMedal size={140} tierIdx={tierIdx} t={t} ringT={ringT} glowAlpha={glowAlpha} earned={badge.earned} category={g} icon={badge.icon} metric={metric} dark={dark} /></div>
+        <div className="flex justify-center mb-3"><HexMedal size={140} tierIdx={tierIdx} level={level} glowAlpha={glowAlpha} earned={badge.earned} category={g} icon={badge.icon} metric={metric} /></div>
         <div className="font-display font-bold text-lg" style={{ color: dark ? "#e2e8f0" : "#0f172a" }}>{badge.title}</div>
         <div className="text-xs font-semibold mt-0.5" style={{ color: safeText(dark, g.color) }}>{MEDAL_TIERS[tierIdx].label} · {g.label}</div>
         {badge.earned && badge.earnedDate && <div className="text-xs mt-2" style={{ color: dark ? "#64748b" : "#94a3b8" }}>Erreicht am {fmtISOshort(badge.earnedDate)}</div>}

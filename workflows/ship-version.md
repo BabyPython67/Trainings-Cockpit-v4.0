@@ -135,4 +135,42 @@ Tool fixen → verifizieren → hier dokumentieren → nicht wiederholen).
   auf die Stufe normierten Wert einführen (hier `ringT = t*4 - tierIdx`, 0 bis 1 je Stufe) statt den
   globalen Fortschrittswert für beides zu missbrauchen. Bei jedem neuen "Stufen + Sub-Progression"-Design
   aktiv unterscheiden: was soll sich über die GANZE Leiter ändern (hier: `t` → Glow-Intensität) vs. was
-  soll sich INNERHALB jeder Stufe unterscheiden (hier: `ringT` → Ringbreite)?
+  soll sich INNERHALB jeder Stufe unterscheiden (hier: `ringT` → Ringbreite)? **v7.12-Nachtrag:** genau
+  dieser `ringT`-Ansatz wurde im nächsten Redesign wieder verworfen — Nutzer-Feedback war, dass eine je
+  Rang unterschiedlich BREITE Ringdicke das Raster/die Proportionen stört. Lehre daraus: "Ringbreite als
+  Trägerin von Progression" ist kein stabiles Konzept, das über mehrere Redesigns trägt — Progression über
+  RAHMEN-DETAILS (zusätzliche Bauteile: Facetten-Band, Apex-Stein) statt über eine sich ständig ändernde
+  Basis-Geometrie ist robuster, weil dieselbe Kachel/derselbe Rahmen für jede Stufe strukturell identisch
+  bleiben kann.
+- **Feine Text-/Rahmen-Details (Kerben, Streifen-/Gravur-Textur, mehrere kleine Icons) wirken im
+  Mockup/bei großer Vorschau "edel", verschwinden aber bei der tatsächlichen App-Größe (34px) komplett
+  oder wirken dort "billig"** (v7.12-Fund, mehrere Nutzer-Feedback-Runden zum Gemini-Redesign): Eck-Kerben
+  lasen sich wie beschädigte Kanten, ein Streifenmuster wie Warnband, drei kleine Stern-Icons wie
+  Sticker — und eine SEHR feine radiale Gravur (`repeating-conic-gradient`, <1° Linienabstand) war bei
+  jeder Größe praktisch unsichtbar, nicht nur bei 34px. Was stattdessen zuverlässig funktionierte: (1)
+  ein echtes ZWEITES Metallband mit sichtbarem Anteil der Ringbreite (nicht nur ein Haarlinien-Inlay von
+  1-2px) und (2) ein einzelner, größerer "Edelstein" mit Sparkle-Highlight statt mehrerer kleiner Icons.
+  Faustregel: jedes neue visuelle Unterscheidungsmerkmal an der tatsächlichen Zielgröße (hier 34px, nicht
+  nur an der 92-140px-Vorschau-/Detail-Größe) gegenprüfen, BEVOR es dem Nutzer zur Bewertung vorgelegt
+  wird — spart hier drei Feedback-Runden (Kerben/Textur/Sterne raus → Meter-Balken als Notlösung → Meter
+  raus, weil vom Nutzer explizit nicht gewollt → am Ende trugen zwei robuste, große Elemente die ganze
+  Information).
+- **Ein zusätzliches externes UI-Element (Meter-Leiste, Badge, Sticker) ist oft die schnellste Lösung für
+  "man sieht die Information nicht", aber nicht automatisch die richtige** (v7.12-Fund): eine
+  Signalstärke-Balken-Leiste unter jeder Medaille löste das Sichtbarkeitsproblem technisch zuverlässig,
+  wurde vom Nutzer aber explizit abgelehnt ("die soll nicht in der App sein") — die Information musste am
+  Ende von der Medaille selbst getragen werden. Lehre: bei einem Sichtbarkeits-/Lesbarkeitsproblem zuerst
+  prüfen, ob sich das bestehende Element selbst stärker/robuster gestalten lässt (hier: Haarlinie → echtes
+  zweites Band, Mini-Icon → großer Edelstein), bevor ein neues, separates UI-Element als Notlösung
+  ergänzt wird — separate Hilfselemente lösen das technische Problem, können aber gegen die eigentliche
+  Design-Absicht laufen.
+- **`clip-path: polygon()` kann Ecken nicht abrunden — für ein abgerundetes Vieleck `clip-path: path(...)`
+  mit einem selbst konstruierten SVG-Pfad verwenden** (v7.12, `hexPath`/`hexClip` in `HexMedal`): pro Ecke
+  werden zwei kurze Geradenstücke (bis kurz vor/nach dem Original-Eckpunkt) durch eine quadratische
+  Bézier-Kurve verbunden, deren Kontrollpunkt der Original-Eckpunkt ist — Standardtrick für "abgerundetes
+  Polygon" ohne echte Kreisbögen. Da verschiedene Ebenen einer Medaille unterschiedliche Boxgrößen haben
+  (Ring/Zentrum/Facetten-Band), braucht jede ihren eigenen, für ihre Boxgröße berechneten Pfad — anders als
+  beim alten `HEX_CLIP`-Konstanten-Ansatz (ein einziger Prozent-String für alle Ebenen) reicht hier keine
+  gemeinsame Konstante. `clip-path:path()` ist erst seit iOS/Safari 16.4 (März 2023) unterstützt — für
+  dieses Projekt unproblematisch, da praktisch jedes reale Gerät längst neuer ist, aber bei einem Projekt
+  mit älterer Ziel-Plattform vorher gegenprüfen.
