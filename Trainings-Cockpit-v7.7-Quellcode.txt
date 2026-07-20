@@ -888,9 +888,9 @@ function cumulativeRunKmDate(runLog, thresholdKm) {
 // Stufen bewusst weit in die Zukunft gestaffelt (Nutzer-Wunsch: "gute Vorsorge") — ausgegraute
 // Fernziele schaden nicht, verschwundene Nahziele schon.
 const BADGE_GROUPS = { run: { label: "Laufen", color: "#6366f1" }, strength: { label: "Kraft", color: "#0d9488" }, vb: { label: "Volleyball", color: "#f59e0b" }, streak: { label: "Serie", color: "#e11d48" }, milestone: { label: "Meilenstein", color: "#7c3aed" } };
-// rank/rankTotal je Leiter: treibt die Icon-Ring-Eskalation (jede Stufe sichtbar anders als die davor) —
+// rank/rankTotal je Leiter: treibt die Metall-Stufe der Hexagon-Medaille (badgeMedalTier) —
 // eigenständige Abzeichen ohne Leiter (streak_record, plan_complete) bekommen rank 0/rankTotal 1, was
-// in badgeTierStyle() als "volle Ausbaustufe" behandelt wird (einmalige Auszeichnung, kein Fortschritt).
+// dort als "volle Ausbaustufe" (Platin) behandelt wird (einmalige Auszeichnung, kein Fortschritt).
 const BADGE_CATALOG = [
   ...[25, 50, 100, 150, 200, 300, 500, 750, 1000].map((km, i, arr) => ({
     id: `run_${km}km`, group: "run", tier: "lifetime", title: `${km} km gesamt`, icon: "Mountain", target: km, unit: "km", rank: i, rankTotal: arr.length,
@@ -1139,71 +1139,87 @@ function BadgeGlyph({ icon, size = 15, color }) {
   const I = M[icon] || Trophy;
   return <I size={size} color={color} />;
 }
-// v7.3: Rang-Abzeichen nach Rocket-League-Rangleitern-Vorbild (Nutzer-Referenz) — Fortschritt drückt
-// sich in einer WECHSELNDEN GRUNDFORM aus (Ring -> Sechseck -> Stern -> Diamant, je Quartil der Leiter),
-// nicht mehr nur in Ringdicke/Glow/Punktzahl wie in v7.0/v7.1 (Nutzer-Feedback: "zu subtil, Form/Farbe/
-// Symbol komplett gleich"). Innerhalb einer Grundform zeigen 0-2 eingesetzte, versetzt gedrehte
-// Facetten-Umrisse zusätzliche Detailstufen (analog "I/II/III" im Vorbild). Die letzte Stufe einer
-// echten Leiter (rank===rankTotal-1) bekommt zusätzlich Strahlen — angelehnt an den Grand-Champion-
-// Kranz. rankTotal===1 (einmalige Auszeichnungen ohne Leiter) = volle Ausbaustufe (Diamant, Strahlen).
-function badgeTierStyle(rank, rankTotal) {
+// v7.7: Hexagon-Medaille (Garmin-Prinzip, Design-System-Handoff) ersetzt die v7.3-Formen-Eskalation
+// (Ring→Sechseck→Stern→Diamant). Die Metallfassung kodiert jetzt die Stufe (Bronze/Silber/Gold/Platin),
+// die farbige Facetten-Kachel kodiert die Kategorie — statt einer wechselnden Grundform in nur einer Farbe.
+// Vier am Mockup konkret bemängelte/gefundene Punkte wurden hier gefixt, siehe Kommentare in HexMedal
+// unten: Icon zu hoch (jetzt echte Hex-Mitte statt fixer Pixel-Offset), Metall-Kontrast zu schwach
+// (Fassungsring deutlich verbreitert + Stufen stärker auseinandergezogen), Zahl von der Kante verdeckt
+// (mittig im Band statt per Padding Richtung Hex-Spitze verschoben), Banderolen-Zacken wirkten random
+// (gleiche Rotation/Gradientenrichtung wie das Band, an dessen Rand verankert). Die Banderole selbst
+// bleibt wie im Mockup — kein Neuentwurf, nur diese vier Punkte.
+const HEX_CLIP = "polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%)";
+const MEDAL_TIERS = [
+  { key: "bronze", label: "Bronze", grad: "linear-gradient(140deg,#f0d9b8 0%,#cf9a5c 30%,#9c6a34 62%,#6b4520 100%)" },
+  { key: "silber", label: "Silber", grad: "linear-gradient(140deg,#e4e9ef 0%,#b0b8c4 32%,#78828f 64%,#434b56 100%)" },
+  { key: "gold", label: "Gold", grad: "linear-gradient(140deg,#fff3c4 0%,#f0c04a 30%,#c8901c 62%,#8a5c0a 100%)" },
+  { key: "platin", label: "Platin", grad: "linear-gradient(140deg,#ffffff 0%,#dbe4ee 28%,#aeb9c7 58%,#79808c 100%)" },
+];
+// Löst badgeTierStyle ab: statt eines kontinuierlichen Formen-Morphs jetzt ein diskreter Stufen-Index
+// (0=Bronze .. 3=Platin) aus der Rang-Position in der jeweiligen Abzeichen-Leiter. Rein und testbar
+// (siehe tools/test-pure.mjs) — t/isPeak/glowAlpha-Semantik bewusst wie in badgeTierStyle beibehalten.
+function badgeMedalTier(rank, rankTotal) {
   const t = rankTotal > 1 ? rank / (rankTotal - 1) : 1;
-  const shapeTier = Math.min(3, Math.floor(t * 4));
-  const withinTier = t * 4 - shapeTier;
-  const detailLevel = Math.min(2, Math.floor(withinTier * 3));
-  const isPeak = rankTotal > 1 && rank === rankTotal - 1;
-  return { t, shapeTier, detailLevel, isPeak: isPeak || rankTotal === 1, ringPx: 1.5 + t * 2, glowPx: 3 + t * 11, glowAlpha: 0.3 + t * 0.4 };
+  const tierIdx = Math.min(3, Math.floor(t * 4));
+  const isPeak = (rankTotal > 1 && rank === rankTotal - 1) || rankTotal === 1;
+  return { t, tierIdx, isPeak, glowAlpha: 0.3 + t * 0.4 };
 }
-// Eckpunkte eines regelmäßigen N-Ecks um (cx,cy), erste Ecke oben (rotOffset dreht den Satz für
-// versetzt wirkende Facetten-Umrisse).
-function polygonPoints(cx, cy, r, sides, rotOffset = 0) {
-  const pts = [];
-  for (let i = 0; i < sides; i++) { const a = ((-90 + rotOffset + (i * 360) / sides) * Math.PI) / 180; pts.push(`${cx + r * Math.cos(a)},${cy + r * Math.sin(a)}`); }
-  return pts.join(" ");
-}
-// Fünfzackiger Stern (Gold/Platin-Analogon): 5 äußere + 5 innere Punkte im Wechsel.
-function starPoints(cx, cy, rOuter, rotOffset = 0) {
-  const pts = [];
-  for (let i = 0; i < 10; i++) { const r = i % 2 === 0 ? rOuter : rOuter * 0.48; const a = ((-90 + rotOffset + (i * 360) / 10) * Math.PI) / 180; pts.push(`${cx + r * Math.cos(a)},${cy + r * Math.sin(a)}`); }
-  return pts.join(" ");
-}
-const SHAPE_SIDES = [0, 6, 0, 4]; // Index = shapeTier: 0 Kreis, 1 Sechseck, 2 Stern (eigene Funktion), 3 Diamant
-function ShapeOutline({ shapeTier, cx, cy, r, rotOffset = 0, fill, fillOpacity, stroke, strokeWidth }) {
-  if (shapeTier === 0) return <circle cx={cx} cy={cy} r={r} fill={fill} fillOpacity={fillOpacity} stroke={stroke} strokeWidth={strokeWidth} />;
-  if (shapeTier === 2) return <polygon points={starPoints(cx, cy, r, rotOffset)} fill={fill} fillOpacity={fillOpacity} stroke={stroke} strokeWidth={strokeWidth} strokeLinejoin="round" />;
-  return <polygon points={polygonPoints(cx, cy, r, SHAPE_SIDES[shapeTier], rotOffset)} fill={fill} fillOpacity={fillOpacity} stroke={stroke} strokeWidth={strokeWidth} strokeLinejoin="round" />;
-}
-function BadgeShape({ shapeTier, detailLevel, isPeak, size, earned, color, dim, ringPx }) {
-  const cx = size / 2, cy = size / 2, r = size / 2 - 2;
-  const strokeColor = earned ? color : dim;
+// Alle Maße als Anteil von `size` (Gesamtbreite) — dieselbe Formel trägt die 34px-Kompakt- wie die
+// 140px-Detail-Variante, keine zwei hart codierten Layouts.
+function HexMedal({ size, tierIdx, glowAlpha, earned, category, icon, metric, dark }) {
+  const tier = MEDAL_TIERS[tierIdx];
+  const H = size * 1.16;
+  const hexTop = size * 0.12;
+  const outerW = size * 0.90;
+  const rilleGap = size * 0.018;
+  const ringW = Math.max(size * 0.12, 2.5); // v7.7-Fix: Fassungsring deutlich breiter als im Mockup (dort nur ~3% Anteil)
+  const rilleW = outerW - 2 * rilleGap;
+  const innerW = rilleW - 2 * ringW;
+  const innerLeft = (size - innerW) / 2;
+  const innerTop = hexTop + rilleGap + ringW;
+  const hexCenterY = hexTop + outerW / 2; // v7.7-Fix: Icon zentriert sich auf die echte Hex-Mitte, nicht auf einen kopierten Pixel-Offset
+  const iconSize = innerW * 0.5;
+  const ribbonCenterY = hexTop + outerW * 0.70; // im breitesten Hex-Bereich (25–75% der Hex-Höhe), nicht nahe der unteren Spitze
+  const ribbonH = size * 0.20;
+  const ribbonW = innerW * 1.15;
+  const foldW = size * 0.09, foldH = size * 0.16;
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ overflow: "visible", display: "block" }}>
-      {isPeak && Array.from({ length: 8 }).map((_, i) => {
-        const a = ((i * 45 - 90) * Math.PI) / 180;
-        return <line key={i} x1={cx + (r + 1) * Math.cos(a)} y1={cy + (r + 1) * Math.sin(a)} x2={cx + (r + 5) * Math.cos(a)} y2={cy + (r + 5) * Math.sin(a)} stroke={strokeColor} strokeWidth={1.4} strokeLinecap="round" opacity={earned ? 0.75 : 0.35} />;
-      })}
-      <ShapeOutline shapeTier={shapeTier} cx={cx} cy={cy} r={r} fill={earned ? color : "none"} fillOpacity={earned ? 0.22 : 0} stroke={strokeColor} strokeWidth={ringPx} />
-      {detailLevel >= 1 && <ShapeOutline shapeTier={shapeTier} cx={cx} cy={cy} r={r * 0.68} rotOffset={18} fill="none" fillOpacity={0} stroke={strokeColor} strokeWidth={1} />}
-      {detailLevel >= 2 && <ShapeOutline shapeTier={shapeTier} cx={cx} cy={cy} r={r * 0.42} rotOffset={0} fill="none" fillOpacity={0} stroke={strokeColor} strokeWidth={1} />}
-    </svg>
-  );
-}
-function BadgeTile({ badge, isNext, dark }) {
-  const g = BADGE_GROUPS[badge.group];
-  const pct = badge.target && badge.current != null ? Math.min(100, (badge.current / badge.target) * 100) : 0;
-  const { shapeTier, detailLevel, isPeak, ringPx, glowPx, glowAlpha } = badgeTierStyle(badge.rank || 0, badge.rankTotal || 1);
-  const earned = badge.earned;
-  const dim = dark ? "#334155" : "#cbd5e1";
-  const size = 34;
-  const glowHex = Math.round(glowAlpha * 255).toString(16).padStart(2, "0");
-  return (
-    <div className="p-2 flex flex-col items-center text-center gap-1 min-w-0" style={{ borderRadius: RADIUS.tile, background: badge.earned ? softBg(dark, g.color, g.color + "14") : dark ? "#141b2c" : "#f8fafc", opacity: badge.earned || isNext ? 1 : 0.5 }}>
-      <div style={{ position: "relative", width: size, height: size, filter: earned ? `drop-shadow(0 0 ${glowPx}px ${g.color}${glowHex})` : "none" }}>
-        <BadgeShape shapeTier={shapeTier} detailLevel={detailLevel} isPeak={isPeak} size={size} earned={earned} color={g.color} dim={dim} ringPx={ringPx} />
-        <div className="absolute inset-0 flex items-center justify-center">
-          <BadgeGlyph icon={badge.icon} size={14} color={earned ? safeText(dark, g.color) : dark ? "#64748b" : "#94a3b8"} />
+    <div style={{ position: "relative", width: size, height: H, opacity: earned ? 1 : 0.45 }}>
+      <div style={{ position: "absolute", left: size * 0.05, top: hexTop, width: outerW, height: outerW, clipPath: HEX_CLIP, background: `radial-gradient(circle, ${category.color}77 0%, transparent 70%)`, filter: `blur(${Math.max(size * 0.04, 1.5)}px)`, opacity: glowAlpha, animation: earned ? "badgeGlowPulse 2.4s ease-in-out infinite" : "none" }} />
+      <div style={{ position: "absolute", left: size * 0.05, top: hexTop, width: outerW, height: outerW, clipPath: HEX_CLIP, background: tier.grad, boxShadow: "inset 0 2px 2px rgba(255,255,255,.6), inset 0 -6px 9px -3px rgba(0,0,0,.45)" }} />
+      <div style={{ position: "absolute", left: size * 0.05 + rilleGap, top: hexTop + rilleGap, width: rilleW, height: rilleW, clipPath: HEX_CLIP, background: dark ? "#0b0f1a" : "#20262e" }} />
+      <div style={{ position: "absolute", left: innerLeft, top: innerTop, width: innerW, height: innerW, clipPath: HEX_CLIP, background: category.color, overflow: "hidden" }}>
+        <div style={{ position: "absolute", inset: 0, background: `repeating-linear-gradient(125deg, rgba(255,255,255,0) 0 ${Math.max(innerW * 0.1, 2)}px, rgba(255,255,255,.08) ${Math.max(innerW * 0.1, 2)}px ${Math.max(innerW * 0.2, 4)}px)` }} />
+        <div style={{ position: "absolute", inset: 0, background: "linear-gradient(135deg, rgba(255,255,255,.35) 0%, rgba(255,255,255,0) 45%)" }} />
+        {earned && <div style={{ position: "absolute", top: "-30%", left: "-45%", width: "30%", height: "200%", background: "linear-gradient(100deg, transparent 0%, rgba(255,255,255,.75) 50%, transparent 100%)", animation: "badgeShine 2.8s ease-in-out infinite" }} />}
+      </div>
+      {/* Banderolen-Zacken: gleiche Rotation/Gradientenrichtung wie das Band, an dessen Rand verankert (v7.7-Fix) */}
+      <div style={{ position: "absolute", left: innerLeft - foldW * 0.55, top: ribbonCenterY - foldH / 2, width: foldW, height: foldH, transform: "rotate(-12deg)", background: tier.grad, clipPath: "polygon(0 0,100% 0,100% 100%,0 100%,45% 50%)", boxShadow: "0 2px 4px rgba(0,0,0,.35)" }} />
+      <div style={{ position: "absolute", left: innerLeft + innerW - foldW * 0.45, top: ribbonCenterY - foldH / 2, width: foldW, height: foldH, transform: "rotate(-12deg)", background: tier.grad, clipPath: "polygon(0 0,100% 0,55% 50%,100% 100%,0 100%)", boxShadow: "0 2px 4px rgba(0,0,0,.35)" }} />
+      {/* Banderolen-Band: hinter der Medaille geclippt (Hex-clip-path + contain:paint); Zahl mittig im
+          breitesten Hex-Bereich statt per Padding Richtung Spitze verschoben (v7.7-Fix: Zahl war verdeckt) */}
+      <div style={{ position: "absolute", left: (size - ribbonW) / 2, top: ribbonCenterY - ribbonH / 2, width: ribbonW, height: ribbonH, transform: "rotate(-12deg)", clipPath: HEX_CLIP, overflow: "hidden", contain: "paint" }}>
+        <div style={{ position: "absolute", left: (ribbonW - innerW) / 2, top: 0, width: innerW, height: ribbonH, background: tier.grad, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "inset 0 2px 1px rgba(255,255,255,.5), inset 0 -3px 4px rgba(0,0,0,.3)" }}>
+          {metric != null && <span style={{ fontFamily: "'Space Grotesk',monospace", fontStyle: "italic", fontWeight: 800, fontSize: Math.max(size * 0.15, 8), color: "#fff", textShadow: "0 1px 2px rgba(0,0,0,.4)", whiteSpace: "nowrap" }}>{metric}</span>}
         </div>
       </div>
+      <div style={{ position: "absolute", left: "50%", top: hexCenterY, transform: "translate(-50%,-50%)", filter: "drop-shadow(0 2px 3px rgba(0,0,0,.4))" }}>
+        <BadgeGlyph icon={icon} size={iconSize} color="#fff" />
+      </div>
+    </div>
+  );
+}
+// v7.7: size-Prop statt fest 34 (Kompakt-Variante, 34-65px je nach Kontext) — die Detail-Größe
+// (103-157px) rendert HexMedal separat in BadgeDetailModal, nicht über diese Kachel.
+function BadgeTile({ badge, isNext, dark, size = 34, onSelect }) {
+  const g = BADGE_GROUPS[badge.group];
+  const pct = badge.target && badge.current != null ? Math.min(100, (badge.current / badge.target) * 100) : 0;
+  const { tierIdx, glowAlpha } = badgeMedalTier(badge.rank || 0, badge.rankTotal || 1);
+  const metric = badge.target == null && badge.unit && badge.current > 0 ? Math.round(badge.current * 10) / 10
+    : badge.earned ? (badge.target != null ? badge.target : null) : null;
+  return (
+    <button type="button" onClick={() => onSelect && onSelect(badge)} className="p-2 flex flex-col items-center text-center gap-1 min-w-0" style={{ borderRadius: RADIUS.tile, background: badge.earned ? softBg(dark, g.color, g.color + "14") : dark ? "#141b2c" : "#f8fafc", opacity: badge.earned || isNext ? 1 : 0.5 }}>
+      <HexMedal size={size} tierIdx={tierIdx} glowAlpha={glowAlpha} earned={badge.earned} category={g} icon={badge.icon} metric={metric} dark={dark} />
       <div className="text-[9.5px] font-semibold leading-tight" style={{ color: badge.earned ? safeText(dark, g.color) : dark ? "#94a3b8" : "#64748b" }}>{badge.title}</div>
       {/* v7.0: Abzeichen ohne festes Ziel (z. B. "Längste Wochen-Serie") zeigten bisher nur Titel +
           Datum, nie die tatsächlich erreichte Zahl — Titel allein war ohne Bezug (Nutzer-Feedback). */}
@@ -1215,6 +1231,26 @@ function BadgeTile({ badge, isNext, dark }) {
           <div className="text-[8.5px] font-num mt-0.5" style={{ color: dark ? "#64748b" : "#94a3b8" }}>{Math.round(badge.current)}/{badge.target}</div>
         </div>
       )}
+    </button>
+  );
+}
+// v7.7: Detail-Ansicht einer einzelnen Medaille (103-157px), Klick auf eine BadgeTile öffnet dieses
+// Modal — wiederverwendet die Overlay-/Backdrop-CSS von BadgePopup statt ein neues Modal-Muster zu bauen.
+function BadgeDetailModal({ badge, dark, onClose }) {
+  if (!badge) return null;
+  const g = BADGE_GROUPS[badge.group];
+  const { tierIdx } = badgeMedalTier(badge.rank || 0, badge.rankTotal || 1);
+  const metric = badge.target != null ? (badge.earned ? badge.target : Math.round(badge.current || 0)) : (badge.current > 0 ? Math.round(badge.current * 10) / 10 : null);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(2,6,23,0.55)" }} onClick={onClose}>
+      <div className="p-5 w-full max-w-xs text-center shadow-xl" style={{ borderRadius: RADIUS.hero, background: dark ? "#161d2e" : "#ffffff" }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex justify-center mb-3"><HexMedal size={140} tierIdx={tierIdx} glowAlpha={0.3 + tierIdx / 3 * 0.4} earned={badge.earned} category={g} icon={badge.icon} metric={metric} dark={dark} /></div>
+        <div className="font-display font-bold text-lg" style={{ color: dark ? "#e2e8f0" : "#0f172a" }}>{badge.title}</div>
+        <div className="text-xs font-semibold mt-0.5" style={{ color: safeText(dark, g.color) }}>{MEDAL_TIERS[tierIdx].label} · {g.label}</div>
+        {badge.earned && badge.earnedDate && <div className="text-xs mt-2" style={{ color: dark ? "#64748b" : "#94a3b8" }}>Erreicht am {fmtISOshort(badge.earnedDate)}</div>}
+        {!badge.earned && badge.target != null && <div className="text-xs mt-2" style={{ color: dark ? "#64748b" : "#94a3b8" }}>{Math.round(badge.current)}/{badge.target}{badge.unit ? ` ${badge.unit}` : ""}</div>}
+        <button onClick={onClose} className="mt-4 w-full rounded-xl border-2 border-dashed border-slate-200 py-2 text-[11px] font-semibold text-slate-500">Schließen</button>
+      </div>
     </div>
   );
 }
@@ -1289,6 +1325,7 @@ function GesamtstatistikCard({ data, dark }) {
 // Zukunft ausgegraut, nächste Stufe mit Fortschrittsbalken).
 function BadgesCard({ badges, liveStreak, hiddenIds, dark }) {
   const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState(null); // v7.7: angetippte Medaille für BadgeDetailModal
   const visible = badges.filter((b) => !hiddenIds.includes(b.id));
   const lifetime = visible.filter((b) => b.tier === "lifetime");
   const live = visible.filter((b) => b.tier === "live");
@@ -1303,6 +1340,7 @@ function BadgesCard({ badges, liveStreak, hiddenIds, dark }) {
   const liveBest = live.filter((b) => b.earned).slice(-1)[0] || null;
   const groups = ["run", "strength", "vb", "streak", "milestone"];
   return (
+    <>
     <Card className="p-4">
       <div className="flex items-center justify-between mb-2">
         <Eyebrow>Auszeichnungen</Eyebrow>
@@ -1337,7 +1375,7 @@ function BadgesCard({ badges, liveStreak, hiddenIds, dark }) {
       {recent.length > 0 && (
         <div className="mt-2.5">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Neueste Erfolge</div>
-          <div className="grid grid-cols-3 gap-2">{recent.map((b) => <BadgeTile key={b.id} badge={b} dark={dark} />)}</div>
+          <div className="grid grid-cols-3 gap-2">{recent.map((b) => <BadgeTile key={b.id} badge={b} dark={dark} onSelect={setSelected} />)}</div>
         </div>
       )}
       {nextGoals.length > 0 && (
@@ -1373,8 +1411,8 @@ function BadgesCard({ badges, liveStreak, hiddenIds, dark }) {
               <div key={gk}>
                 <div className="text-[10px] font-semibold uppercase tracking-wider mb-1.5" style={{ color: safeText(dark, BADGE_GROUPS[gk].color) }}>{BADGE_GROUPS[gk].label}</div>
                 <div className="grid grid-cols-3 gap-2">
-                  {list.map((b) => <BadgeTile key={b.id} badge={b} isNext={firstOpen && b.id === firstOpen.id} dark={dark} />)}
-                  {liveList.map((b) => <BadgeTile key={b.id} badge={b} isNext={firstOpenLive && b.id === firstOpenLive.id} dark={dark} />)}
+                  {list.map((b) => <BadgeTile key={b.id} badge={b} isNext={firstOpen && b.id === firstOpen.id} dark={dark} onSelect={setSelected} />)}
+                  {liveList.map((b) => <BadgeTile key={b.id} badge={b} isNext={firstOpenLive && b.id === firstOpenLive.id} dark={dark} onSelect={setSelected} />)}
                 </div>
                 {gk === "streak" && liveList.length > 0 && <div className="mt-1 text-[9.5px] text-slate-400">Serien-Abzeichen zeigen die laufende Serie — sie verschwinden, wenn eine Woche reißt.</div>}
               </div>
@@ -1386,6 +1424,8 @@ function BadgesCard({ badges, liveStreak, hiddenIds, dark }) {
         </div>
       )}
     </Card>
+    <BadgeDetailModal badge={selected} dark={dark} onClose={() => setSelected(null)} />
+    </>
   );
 }
 // Einmaliges Pop-up beim frischen Erreichen (Erreichungsdatum = heute und noch nie gezeigt).
@@ -4051,7 +4091,10 @@ export default function App() {
         .font-num{font-family:'Space Grotesk',ui-monospace,monospace;font-variant-numeric:tabular-nums;}
         .tc-input{width:100%;border:1px solid #e2e8f0;border-radius:.75rem;padding:.55rem .75rem;font-size:16px;color:#0f172a;background:#fff;}
         .tc-input:focus{outline:none;border-color:#6366f1;box-shadow:0 0 0 3px rgba(99,102,241,.15);}
-        @media (prefers-reduced-motion: reduce){*{transition:none!important;}}
+        @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important;}}
+        /* v7.7: Hexagon-Medaillen (HexMedal) — Glow-Puls der Fassung + Glanz-Sweep der Facetten-Kachel, nur bei erreichten Abzeichen aktiv. */
+        @keyframes badgeGlowPulse{0%,100%{opacity:.45;transform:scale(.92);}50%{opacity:.95;transform:scale(1.12);}}
+        @keyframes badgeShine{0%{transform:translateX(-140%) rotate(20deg);}55%,100%{transform:translateX(220%) rotate(20deg);}}
 
         /* iPhone/iPad-Feinschliff */
         .tc-app{min-height:100vh;min-height:100dvh;}
@@ -4187,7 +4230,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400" style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))" }}>
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.6` : "Fortschritt wird automatisch gespeichert · v7.6"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.7` : "Fortschritt wird automatisch gespeichert · v7.7"}</span>
           </footer>
         </main>
       </div>

@@ -23,6 +23,7 @@ export {
   extractLaps, extractExtras, pickCol, hrPeakStatus, HR_PEAK_MARGIN_BPM, STOP_RATIO_THRESHOLD,
   longestStreakInfo, planDoneDatesBySport, cumulativeRunKmDate, BADGE_CATALOG, BADGE_GROUPS,
   computeEarnedBadges, lifetimeStats, monthlyRunKm, pulseTrendRows, fmtHours, STRENGTH,
+  badgeMedalTier, MEDAL_TIERS,
 };
 EOF
 npx esbuild "$BUILD_DIR/app-test.jsx" --bundle --format=esm --outfile="$BUILD_DIR/pure.mjs" \

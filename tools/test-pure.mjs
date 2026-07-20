@@ -554,6 +554,33 @@ t("Katalog: ids eindeutig, Gruppen bekannt", () => {
   assert.ok(M.BADGE_CATALOG.every((b) => M.BADGE_GROUPS[b.group]));
 });
 
+console.log("v7.7: Hexagon-Medaille — badgeMedalTier löst die v7.3-Formen-Eskalation ab");
+t("erste Stufe einer Leiter -> Bronze (tierIdx 0)", () => {
+  assert.equal(M.badgeMedalTier(0, 9).tierIdx, 0);
+});
+t("letzte Stufe einer echten Leiter -> Platin (tierIdx 3) und isPeak", () => {
+  const r = M.badgeMedalTier(8, 9);
+  assert.equal(r.tierIdx, 3);
+  assert.equal(r.isPeak, true);
+});
+t("mittlere Stufen steigen monoton mit dem Rang", () => {
+  const tiers = [0, 2, 4, 6, 8].map((rank) => M.badgeMedalTier(rank, 9).tierIdx);
+  for (let i = 1; i < tiers.length; i++) assert.ok(tiers[i] >= tiers[i - 1], `Stufe darf mit dem Rang nicht sinken: ${tiers}`);
+});
+t("rankTotal===1 (einmalige Auszeichnung ohne Leiter) -> volle Ausbaustufe Platin + isPeak", () => {
+  const r = M.badgeMedalTier(0, 1);
+  assert.equal(r.tierIdx, 3);
+  assert.equal(r.isPeak, true);
+});
+t("glowAlpha steigt linear mit t, von 0.3 (Bronze-Anfang) bis 0.7 (Platin-Ende)", () => {
+  assert.equal(M.badgeMedalTier(0, 9).glowAlpha, 0.3);
+  assert.equal(Math.round(M.badgeMedalTier(8, 9).glowAlpha * 100) / 100, 0.7);
+});
+t("MEDAL_TIERS hat genau 4 Stufen mit eindeutigen Labels (Bronze/Silber/Gold/Platin)", () => {
+  assert.equal(M.MEDAL_TIERS.length, 4);
+  assert.deepEqual(M.MEDAL_TIERS.map((t) => t.label), ["Bronze", "Silber", "Gold", "Platin"]);
+});
+
 console.log("v7.0: Gesamtstatistik");
 t("lifetimeStats: Summen, Rekorde, beste Woche", () => {
   const runs = [

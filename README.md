@@ -1,4 +1,4 @@
-# Trainings-Cockpit v7.6
+# Trainings-Cockpit v7.7
 
 Volleyball · Laufen · Kraft · Schule · Kalender
 
@@ -65,9 +65,10 @@ Zweistufige Navigation: oben die Bereiche **Training**, **Kalender** und **Schul
   - **Schärferer Radius**: Karten/Kacheln/Buttons von den bisherigen ~16px auf 12px/10px/8px (Richtung Garmin/Whoop) — neues zentrales `RADIUS`-Token statt verstreuter Tailwind-Klassen.
   - **Kraft-Farbe wechselt auf Teal** (`#0d9488`-Familie, vorher Grün/Emerald). Da Teal in der App bereits als generelles "im Soll/gut"-Signal verbaut war (Bereitschafts-Ampel, Laufökonomie-Charts, Ziel-Linien, Bestzeit-Karte, erledigt-Häkchen), wurde dieses Signal im Gegenzug auf Grün/Emerald umgefärbt — im Kern ein Tausch der beiden Farbrollen, damit beide auf demselben Screen weiter eindeutig unterscheidbar bleiben.
   - **`.font-num` wechselt von JetBrains Mono auf Space Grotesk** (mit `tabular-nums`) — mehr Charakter bei Statistiken, ein Font weniger im Google-Fonts-Import.
+- v7.7 – Abzeichen-Neudesign, zweiter Schritt des Design-System-Umbaus: die v7.3-Formen-Eskalation (Ring→Sechseck→Stern→Diamant, eine Kategoriefarbe) weicht einer **Hexagon-Medaille nach Garmin-Vorbild** — die Metallfassung kodiert jetzt die Stufe (Bronze/Silber/Gold/Platin), eine farbige Facetten-Kachel kodiert die Kategorie, plus ein rotiertes Banderolen-Band mit der erreichten Kennzahl. Vier am Mockup konkret bemängelte Punkte wurden dabei gefixt, nicht 1:1 übernommen: das Motiv sitzt jetzt auf der echten Hexagon-Mitte (vorher zu hoch, leere Mitte); der Fassungsring ist deutlich breiter und die vier Stufen sind stärker in Helligkeit/Sättigung auseinandergezogen (vorher bei kleiner Größe kaum unterscheidbar); die Zahl auf der Banderole sitzt mittig im breitesten Hexagon-Bereich statt teilweise von der Kante verdeckt zu werden; die kleinen Zackenformen links/rechts der Banderole teilen jetzt Rotation und Gradientenrichtung mit dem Band, statt wie zwei lose Dreiecke zu wirken — die Banderole selbst blieb bewusst unverändert. Neu: eine große Detail-Ansicht (Klick auf ein Abzeichen) neben der bestehenden Kompakt-Kachel in den Leitern.
 
 ## Dateien
 
 - `index.html` – fertige, ausgelieferte App (gebaut)
-- `Trainings-Cockpit-v7.6-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `Trainings-Cockpit-v7.7-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
 - `tools/` – Build-/Test-/Verifikations-Scripts, `workflows/ship-version.md` – Ablauf-SOP für neue Versionen
