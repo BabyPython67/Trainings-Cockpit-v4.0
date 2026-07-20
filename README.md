@@ -1,4 +1,4 @@
-# Trainings-Cockpit v7.10
+# Trainings-Cockpit v7.11
 
 Volleyball · Laufen · Kraft · Schule · Kalender
 
@@ -73,9 +73,14 @@ Bottom-Tab-Bar mit 5 Zielen: **Start** (Cockpit), **Woche**, ein erhöhter **Sch
   - **Abzeichen-Icon überlappte das Band nicht mehr**: Icon-Position/-Größe rechnerisch so bemessen, dass die Icon-Unterkante bei jeder Medaillen-Größe (34–157px) oberhalb der Band-Oberkante bleibt.
   - **Platin deutlich von Silber abgesetzt**: statt eines nur helleren Graus jetzt ein eisig-blauer "Diamant"-Ton (Sky-Familie, bislang ungenutzt) — liest sich in gängiger Rang-Bildsprache klar als höchste Stufe.
 - v7.10 – Bronze deutlicher von Gold abgesetzt (Nutzerfeedback direkt im Anschluss an v7.9): Bronze war vorher nur eine hellere/blassere Variante von Golds Farbverlauf — beide warme Gelb-Braun-Töne mit ähnlicher Helligkeit am oberen Ende. Jetzt echtes Kupfer-Bronze: rötlicher, matter, insgesamt spürbar dunkler/weniger leuchtend als Gold — liest sich klar als niedrigere Stufe statt als Gold-Abstufung.
+- v7.11 – Feedback nach dem ersten Testen von v7.9/v7.10 auf dem echten Gerät, drei Abzeichen-Korrekturen plus ein dabei entdeckter, älterer Geometrie-Bug:
+  - **Zahlen in der Kompakt-Ansicht nicht mehr abgeschnitten**: die Schriftgröße auf der Banderole hatte einen festen Mindestwert, der bei 3-4-stelligen Zahlen (z. B. „1000") in der kleinen 34px-Kachel über den verfügbaren Platz hinausragte. Schriftgröße richtet sich jetzt nach der tatsächlichen Ziffernzahl statt nach einem festen Minimum.
+  - **Zahlen stehen gerade** statt schräg (Nutzerwunsch) — die kursive Schriftauszeichnung auf der Banderole wurde entfernt.
+  - **Sichtbare Variation innerhalb einer Stufe**: zwei Abzeichen derselben Stufe (z. B. 25 km und 50 km, beide Bronze) unterschieden sich bisher nur durch die Zahl — die Ringbreite folgt jetzt der Position innerhalb der eigenen Stufe (nicht mehr der Position über die ganze Leiter), sodass z. B. das zweite Bronze-Abzeichen einer Leiter einen sichtbar breiteren Ring hat als das erste.
+  - **Dabei gefundener Geometrie-Bug behoben** (seit v7.7 unbemerkt): eine Variable, die die Breite des sichtbaren Metallrings steuern sollte, kontrollierte tatsächlich eine dahinterliegende, fast unsichtbare Rille — der echte Metallring war die ganze Zeit auf ~0,6px fixiert. Dadurch wirkten alle vier Stufen bisher überwiegend dunkel statt in ihrer Metallfarbe. Jetzt sauber getrennt: ein breiter, tier-farbiger Ring und eine dünne, konstante dunkle Trennlinie dahinter.
 
 ## Dateien
 
 - `index.html` – fertige, ausgelieferte App (gebaut)
-- `Trainings-Cockpit-v7.10-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `Trainings-Cockpit-v7.11-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
 - `tools/` – Build-/Test-/Verifikations-Scripts, `workflows/ship-version.md` – Ablauf-SOP für neue Versionen

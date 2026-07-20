@@ -113,3 +113,26 @@ Tool fixen → verifizieren → hier dokumentieren → nicht wiederholen).
   denselben Wert ergibt. Beim Verifizieren gezielt mit einer Krankheits-Fixture testen, die lang genug ist,
   um `lostTrainingWeeks > 0` auszulösen (die Standard-Seed-Krankheit ist bewusst nur 1 Tag und deckt das
   NICHT ab).
+- **Variablenname und Kommentar können jahrelang die falsche Schicht beschreiben, ohne dass ein einziger
+  Test das merkt** (v7.11-Fund, `HexMedal`): seit v7.7 hieß eine Variable `ringW` und war als "Breite des
+  Metallrings" kommentiert/gedacht — tatsächlich bestimmte sie die Breite der dunklen Rille DAHINTER, der
+  wirklich sichtbare Metallring war fest auf `rilleGap ≈ size*0.018` genagelt (bei 34px Kompaktgröße
+  ~0,6px, praktisch unsichtbar). Dadurch wirkten alle vier Stufen (Bronze/Silber/Gold/Platin) überwiegend
+  dunkel/schwarz statt in ihrer Metallfarbe — drei Versionen lang (v7.7/v7.9/v7.10) wurde an dieser
+  Variable "getunt", ohne dass sich am sichtbaren Ring etwas änderte, weil an der falschen Schicht gedreht
+  wurde. Pure-Function-Tests und Playwright-Klick-Verifikation fanden das nicht, weil beide nicht prüfen,
+  OB eine Fläche eine bestimmte Farbe hat, nur OB Elemente existieren/nicht clippen. Aufgefallen erst bei
+  genauem visuellen Vergleich eines gezoomten Leiter-Screenshots (alle Stufen sahen gleich dunkel aus).
+  Lehre: bei geometrischen/visuellen CSS-Layer-Stacks (mehrere `<div>`s übereinander mit `clip-path`)
+  nach jeder Änderung eine echte Pixel-Stichprobe machen (Screenshot zoomen, Farbwert an einer bekannten
+  Koordinate lesen), nicht nur "die Zahlen passen rechnerisch" annehmen — Variablennamen sind keine
+  verlässliche Dokumentation dessen, was ein Layer tatsächlich rendert.
+- **Ein Fortschritts-/Rang-Wert, der über ALLE Stufen hinweg linear läuft (`t`, 0-1 über 4 Stufen), variiert
+  INNERHALB einer einzelnen Stufe kaum bis gar nicht** (v7.11-Fund, Nutzer-Feedback: "zwei Bronze-Abzeichen
+  sehen bis auf die Zahl identisch aus"): eine an `t` gekoppelte Ringbreite ändert sich zwischen zwei
+  benachbarten Abzeichen derselben Stufe nur um einen Bruchteil eines Pixels, weil `t` für die ganze Leiter
+  skaliert ist, nicht für die einzelne Stufe. Für sichtbare Variation INNERHALB einer Stufe einen separaten,
+  auf die Stufe normierten Wert einführen (hier `ringT = t*4 - tierIdx`, 0 bis 1 je Stufe) statt den
+  globalen Fortschrittswert für beides zu missbrauchen. Bei jedem neuen "Stufen + Sub-Progression"-Design
+  aktiv unterscheiden: was soll sich über die GANZE Leiter ändern (hier: `t` → Glow-Intensität) vs. was
+  soll sich INNERHALB jeder Stufe unterscheiden (hier: `ringT` → Ringbreite)?

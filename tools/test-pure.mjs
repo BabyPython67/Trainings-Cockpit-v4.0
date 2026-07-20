@@ -576,6 +576,17 @@ t("glowAlpha steigt linear mit t, von 0.3 (Bronze-Anfang) bis 0.7 (Platin-Ende)"
   assert.equal(M.badgeMedalTier(0, 9).glowAlpha, 0.3);
   assert.equal(Math.round(M.badgeMedalTier(8, 9).glowAlpha * 100) / 100, 0.7);
 });
+t("ringT unterscheidet zwei Abzeichen DERSELBEN Stufe (v7.11-Fund: t allein tut das kaum)", () => {
+  const a = M.badgeMedalTier(0, 9), b = M.badgeMedalTier(1, 9);
+  assert.equal(a.tierIdx, b.tierIdx);
+  assert.ok(b.ringT > a.ringT, `ringT muss innerhalb der Stufe steigen: ${a.ringT} -> ${b.ringT}`);
+});
+t("ringT bleibt in [0,1], auch am Stufen-Ende und bei rankTotal===1", () => {
+  for (const [rank, total] of [[0, 9], [8, 9], [0, 1], [4, 9]]) {
+    const r = M.badgeMedalTier(rank, total).ringT;
+    assert.ok(r >= 0 && r <= 1, `ringT außerhalb [0,1] bei rank=${rank},total=${total}: ${r}`);
+  }
+});
 t("MEDAL_TIERS hat genau 4 Stufen mit eindeutigen Labels (Bronze/Silber/Gold/Platin)", () => {
   assert.equal(M.MEDAL_TIERS.length, 4);
   assert.deepEqual(M.MEDAL_TIERS.map((t) => t.label), ["Bronze", "Silber", "Gold", "Platin"]);
