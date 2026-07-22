@@ -1,4 +1,4 @@
-# Trainings-Cockpit v7.12
+# Trainings-Cockpit v7.13
 
 Volleyball · Laufen · Kraft · Schule · Kalender
 
@@ -85,9 +85,10 @@ Bottom-Tab-Bar mit 5 Zielen: **Start** (Cockpit), **Woche**, ein erhöhter **Sch
   - **Gesperrte Abzeichen** sehen jetzt wie echtes, mattes Stahl-Metall aus (eigener Grau-Verlauf, kein Glow, kein Kategorie-Icon-Farbton) statt nur als abgedunkelte Version der erreichten Farbe.
   - **Ecken leicht abgerundet** und **Icons etwas größer** (weiteres Nutzer-Feedback zu den Vorab-Mustern).
   - Mehrere in den Vorab-Mustern verworfene Ansätze: Eck-Kerben (wirkten wie beschädigte Kanten), Streifen-/Feingravur-Textur (bei jeder Größe kaum sichtbar), drei kleine Stern-Icons (wirkten wie Sticker) und eine externe Meter-Leiste zur Level-Anzeige (vom Nutzer explizit abgelehnt) — siehe `workflows/ship-version.md` für die daraus gezogenen Lehren.
+- v7.13 – **Einheit frei verschieben**: jede noch offene Lauf-, Kraft- oder Volleyball-Einheit lässt sich jetzt unabhängig von einem Ausfall auf einen anderen Tag derselben Woche verschieben (neuer „Verschieben"-Button in der aufgeklappten Zeile) — z. B. um bei einer ausgefallenen Volleyball-Einheit eine noch offene Einheit aus den letzten Tagen in die frei gewordene Zeit zu legen, oder für andere Sonderfälle. Die Einheit wird 1:1 kopiert (nicht neu erfunden wie bei der bestehenden Volleyball-Ausfallen-Ersatz-Funktion, die unverändert weiterläuft) — die Original-Zeile bleibt sichtbar mit „Verschoben"-Badge und zählt nirgends mehr mit. Nur offene (nicht abgehakte) Einheiten sind verschiebbar, nur innerhalb der aktuell angezeigten Plan-Woche.
 
 ## Dateien
 
 - `index.html` – fertige, ausgelieferte App (gebaut)
-- `Trainings-Cockpit-v7.12-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
+- `Trainings-Cockpit-v7.13-Quellcode.txt` – lesbare Quellfassung (Basis für künftige Builds)
 - `tools/` – Build-/Test-/Verifikations-Scripts, `workflows/ship-version.md` – Ablauf-SOP für neue Versionen

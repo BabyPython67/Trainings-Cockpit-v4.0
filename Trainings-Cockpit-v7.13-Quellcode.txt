@@ -337,17 +337,25 @@ function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode, ov
   const mkuid = (day, kind) => `w${week}-${day}-${kind}`; // stabil: hängt nicht an der Position im Tages-Array
   // v6.0: Ausfälle & Ersatz-Einheiten (data.overrides). Ersatz bekommt die abgeleitete uid "<original>-ersatz" —
   // deterministisch, kollisionsfrei zum mkuid-Schema und damit stabil abhakbar wie jede Plan-Einheit.
+  // v7.13: dasselbe Prinzip für frei verschobene Einheiten — Kopie bekommt "<original>-verschoben", trägt aber
+  // (anders als die frei erfundene Ersatz-Einheit) den vollständigen Original-Snapshot weiter (Typ/HF/Übungen etc.).
   const ov = overrides || {};
   const repsByDay = {};
   Object.entries(ov).forEach(([ouid, o]) => {
-    if (!ouid.startsWith(`w${week}-`) || !o || o.status !== "ausgefallen" || !o.replacement) return;
-    const r = o.replacement;
-    if (!DAYS.includes(r.day) || !SPORT[r.sport] || r.sport === "rest") return;
-    (repsByDay[r.day] = repsByDay[r.day] || []).push({
-      uid: `${ouid}-ersatz`, sport: r.sport, label: r.label || "Ersatz-Einheit", dur: r.dur || "",
-      desc: `Ersatz für ausgefallenes ${ouid.endsWith("-vb") ? "Volleyball" : "Training"}`,
-      load: Math.max(1, Math.min(9, Number(r.load) || 4)), replacement: true, replacesUid: ouid,
-    });
+    if (!ouid.startsWith(`w${week}-`) || !o) return;
+    if (o.status === "ausgefallen" && o.replacement) {
+      const r = o.replacement;
+      if (!DAYS.includes(r.day) || !SPORT[r.sport] || r.sport === "rest") return;
+      (repsByDay[r.day] = repsByDay[r.day] || []).push({
+        uid: `${ouid}-ersatz`, sport: r.sport, label: r.label || "Ersatz-Einheit", dur: r.dur || "",
+        desc: `Ersatz für ausgefallenes ${ouid.endsWith("-vb") ? "Volleyball" : "Training"}`,
+        load: Math.max(1, Math.min(9, Number(r.load) || 4)), replacement: true, replacesUid: ouid,
+      });
+    } else if (o.status === "verschoben" && o.snapshot && DAYS.includes(o.movedTo)) {
+      (repsByDay[o.movedTo] = repsByDay[o.movedTo] || []).push({
+        ...o.snapshot, uid: `${ouid}-verschoben`, moved: true, movedFrom: ouid, movedFromDay: o.fromDay,
+      });
+    }
   });
 
   return DAYS.map((day) => {
@@ -381,7 +389,11 @@ function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode, ov
     if (repsByDay[day]) items.push(...repsByDay[day]);
     // v7.0: geplante Last vor dem Nullen sichern (originalLoad) — Wochen-Charts sollen einen Ausfall
     // sichtbar von einem echten Ruhetag unterscheiden können, ohne dass load wieder mitzählt.
-    items.forEach((it) => { const o = ov[it.uid]; if (o && o.status === "ausgefallen") { it.cancelled = true; it.originalLoad = it.load; it.load = 0; } });
+    items.forEach((it) => {
+      const o = ov[it.uid];
+      if (o && o.status === "ausgefallen") { it.cancelled = true; it.originalLoad = it.load; it.load = 0; }
+      else if (o && o.status === "verschoben") { it.movedAway = true; it.movedTo = o.movedTo; it.originalLoad = it.load; it.load = 0; }
+    });
     // v5.0: Krank-/Aufbau-Markierung — Einheiten bleiben sichtbar & abhakbar (uid unverändert)
     // v6.0-Fix: Einheiten ohne desc (Volleyball) bekamen "undefined · …" — Anhängen jetzt defensiv
     // v7.0: Aufbau greift wirklich in die Einheit ein statt nur einen Hinweis anzuhängen (Muster: Taper-Shakeout
@@ -395,7 +407,7 @@ function buildWeekPlan(week, phaseOverride, vbSlots, illnessLog, planEndMode, ov
       else addDesc(it, "Krank gemeldet — Pause empfohlen, höchstens sehr locker");
     });
     else if (sickPhase === "ramp") items.forEach((it) => {
-      if (it.cancelled) return; // Ausgefallene bleiben ausgefallen — keine Wiederbelebung über den Umbau
+      if (it.cancelled || it.movedAway) return; // Ausgefallene/verschobene bleiben so — keine Wiederbelebung über den Umbau
       if (it.sport === "run" && (it.type === "int" || it.type === "tempo")) {
         // Harte Läufe werden zur Easy-Einheit der laufenden Woche (uid & Häkchen bleiben; Easy hat kein Pace-Ziel)
         const easy = runs.Mo && runs.Mo.type === "easy" ? runs.Mo : { dur: "30 Min", hr: "130–140" };
@@ -416,6 +428,11 @@ function weekLoadBySport(week, vbSlots, illnessLog, planEndMode, overrides) {
   const out = { run: 0, vb: 0, strength: 0 };
   buildWeekPlan(week, undefined, vbSlots, illnessLog, planEndMode, overrides).forEach((d) => d.items.forEach((it) => { if (out[it.sport] != null) out[it.sport] += it.load || 0; }));
   return out;
+}
+// v7.13: offene, noch nicht abgehakte Original-Einheit — Ruhetage/Turnier/bereits verschobene oder
+// ausgefallene Einheiten sowie Ersatz-/Verschoben-Kopien selbst lassen sich nicht (nochmal) verschieben.
+function isMovable(it, data) {
+  return it.load > 0 && !it.tournament && !it.replacement && !it.moved && !it.movedAway && !it.cancelled && !(data.done || {})[it.uid];
 }
 // Einmalige Migration: alte positionsbasierte Häkchen-Keys ("3-Mi-1") auf stabile uids ("w3-Mi-vb") umziehen
 function migrateDone(done) {
@@ -1045,19 +1062,21 @@ function SessionRow({ item, done, onToggle, onExpand, isOpen, extra }) {
     <div className={`rounded-xl bg-white border shadow-sm transition ${done ? "" : "border-slate-200/80"}`} style={done ? { borderColor: s.color + "66", background: softBg(dark, s.color, s.tint) } : {}}>
       {/* v6.1-Fix: Dimmen nur auf die durchgestrichene Kopfzeile begrenzt, nicht auf die ganze Karte —
           sonst wirkten auch die aufgeklappten Ersatz-Formular-Buttons/-Felder wie deaktiviert. */}
-      <div className="p-3.5 flex items-center gap-3" style={item.cancelled ? { opacity: 0.6 } : {}}>
+      <div className="p-3.5 flex items-center gap-3" style={item.cancelled || item.movedAway ? { opacity: 0.6 } : {}}>
         <button onClick={checkable ? onToggle : undefined} disabled={!checkable} className={`flex items-center gap-3 flex-1 min-w-0 text-left ${checkable ? "active:scale-[0.99]" : ""} transition`}>
           <div className="h-9 w-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: done ? s.color : softBg(dark, s.color, s.tint) }}><SportGlyph sport={item.sport} size={17} color={done ? "#fff" : undefined} /></div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
-              <span className={`font-semibold text-sm ${done || item.cancelled ? "line-through text-slate-400" : "text-slate-800"}`}>{item.label}{item.time ? <span className="font-num text-slate-500 font-medium"> · {item.time}</span> : ""}</span>
+              <span className={`font-semibold text-sm ${done || item.cancelled || item.movedAway ? "line-through text-slate-400" : "text-slate-800"}`}>{item.label}{item.time ? <span className="font-num text-slate-500 font-medium"> · {item.time}</span> : ""}</span>
               {item.taper && <span className="text-[10px] font-semibold text-amber-700 bg-amber-100 rounded px-1.5 py-0.5">Taper</span>}
               {item.cancelled && <span className="text-[10px] font-semibold text-slate-600 bg-slate-200 rounded px-1.5 py-0.5">Ausgefallen</span>}
+              {item.movedAway && <span className="text-[10px] font-semibold text-slate-600 bg-slate-200 rounded px-1.5 py-0.5">Verschoben → {DAY_FULL[item.movedTo]}</span>}
+              {item.moved && <span className="text-[10px] font-semibold text-violet-700 bg-violet-100 rounded px-1.5 py-0.5">Verschoben{item.movedFromDay ? ` von ${DAY_FULL[item.movedFromDay]}` : ""}</span>}
               {item.replacement && <span className="text-[10px] font-semibold text-violet-700 bg-violet-100 rounded px-1.5 py-0.5">Ersatz</span>}
               {item.illness === "sick" && <span className="text-[10px] font-semibold text-rose-700 bg-rose-100 rounded px-1.5 py-0.5">Krank</span>}
               {item.illness === "ramp" && <span className="text-[10px] font-semibold text-sky-700 bg-sky-100 rounded px-1.5 py-0.5">Aufbau</span>}
             </div>
-            <div className="text-xs text-slate-500">{[item.dur, item.cancelled ? "Training ausgefallen — zählt diese Woche nicht" : item.desc].filter(Boolean).join(" · ")}</div>
+            <div className="text-xs text-slate-500">{[item.dur, item.cancelled ? "Training ausgefallen — zählt diese Woche nicht" : item.movedAway ? "Verschoben — an anderer Stelle eingeplant" : item.desc].filter(Boolean).join(" · ")}</div>
           </div>
         </button>
         {item.hr && <span className="font-num text-[11px] font-semibold text-slate-400 bg-slate-100 rounded-md px-1.5 py-1 shrink-0">HF {item.hr}</span>}
@@ -1629,9 +1648,9 @@ function CockpitTab({ data, setData, currentWeek, daysToT, phaseNow, plan, goWee
           {inPlan && todayPlan
             ? todayPlan.items.map((it) => (
                 <SessionRow key={it.uid} item={it} done={!!data.done[it.uid]} onToggle={it.load > 0 ? () => toggleDone(it.uid) : undefined}
-                  onExpand={it.sport === "run" && !it.replacement ? () => setOpenRun(openRun === it.uid ? null : it.uid) : undefined}
+                  onExpand={it.sport === "run" && !it.replacement && !it.movedAway ? () => setOpenRun(openRun === it.uid ? null : it.uid) : undefined}
                   isOpen={openRun === it.uid}
-                  extra={it.sport === "run" && !it.replacement ? <GarminExport item={it} week={effectiveWeek(currentWeek, data.illnessLog)} /> : undefined}
+                  extra={it.sport === "run" && !it.replacement && !it.movedAway ? <GarminExport item={it} week={effectiveWeek(currentWeek, data.illnessLog)} /> : undefined}
                 />
               ))
             : <Card className="p-4 text-sm text-slate-500">Heute liegt außerhalb des 16-Wochen-Plans.</Card>}
@@ -1878,6 +1897,55 @@ function VbAusfallPanel({ item, day, data, setData }) {
   );
 }
 
+/* ==== v7.13: Einheit frei verschieben — generell für jede offene Lauf-/Kraft-/Volleyball-Einheit,
+   unabhängig von einem Ausfall. Kopiert die Einheit 1:1 auf einen anderen Tag derselben Woche
+   (kein Umformulieren wie bei der Ausfallen-Ersatz-Einheit); die Original-Zeile bleibt sichtbar,
+   zählt aber nirgends mehr mit (Last 0), analog zum bestehenden Ausfallen-Muster. ==== */
+function MoveUnitPanel({ item, day, data, setData }) {
+  const targetDays = DAYS.filter((d) => d !== day);
+  const [target, setTarget] = useState(targetDays[0]);
+  const [showForm, setShowForm] = useState(false);
+  const btn = "rounded-xl px-3 py-2 text-xs font-semibold border transition";
+  const moveTo = () => {
+    setData((d) => ({
+      ...d,
+      overrides: {
+        ...(d.overrides || {}),
+        [item.uid]: { status: "verschoben", movedTo: target, fromDay: day, snapshot: { ...item, uid: undefined } },
+      },
+    }));
+    setShowForm(false);
+  };
+  const revert = () => {
+    setData((d) => {
+      const o = { ...(d.overrides || {}) };
+      delete o[item.uid];
+      const done = { ...d.done };
+      delete done[`${item.uid}-verschoben`];
+      return { ...d, overrides: o, done };
+    });
+  };
+  if (item.movedAway) return (
+    <div className="flex flex-wrap gap-2">
+      <button onClick={revert} className={`${btn} bg-white text-slate-600 border-slate-200`}>Verschieben zurücknehmen</button>
+    </div>
+  );
+  if (!showForm) return <button onClick={() => setShowForm(true)} className={`${btn} bg-white text-slate-600 border-slate-200`}>Verschieben</button>;
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-2">
+        <select value={target} onChange={(e) => setTarget(e.target.value)} className="tc-input" style={{ flex: 1, minWidth: 0 }}>
+          {targetDays.map((d) => <option key={d} value={d}>{DAY_FULL[d]}</option>)}
+        </select>
+      </div>
+      <div className="flex gap-2">
+        <button onClick={moveTo} className={`${btn} flex-1 text-white border-transparent`} style={{ background: "#7c3aed" }}>Dorthin verschieben</button>
+        <button onClick={() => setShowForm(false)} className={`${btn} flex-1 bg-white text-slate-600 border-slate-200`}>Abbrechen</button>
+      </div>
+    </div>
+  );
+}
+
 /* ===================== WOCHENPLAN ===================== */
 function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
   const dark = useDark();
@@ -1930,14 +1998,20 @@ function WeekTab({ data, setData, currentWeek, tournamentPassed }) {
               </div>
               <div className="px-3 pb-3 space-y-1.5">
                 {d.items.map((it) => {
-                  const isVbSlot = it.sport === "vb" && !it.tournament && !it.replacement; // nur echte Vereins-Slots können ausfallen
+                  const isVbSlot = it.sport === "vb" && !it.tournament && !it.replacement && !it.moved; // nur echte Vereins-Slots können ausfallen, keine verschobene Kopie
+                  const movable = isMovable(it, data);
                   return (
                     <SessionRow key={it.uid} item={it}
                       done={!!data.done[it.uid]}
                       onToggle={it.load > 0 ? () => toggleDone(it.uid) : undefined}
-                      onExpand={(it.ex && it.ex.length) || (it.sport === "run" && !it.replacement) || isVbSlot ? () => setOpen(open === it.uid ? null : it.uid) : undefined}
+                      onExpand={(it.ex && it.ex.length) || (it.sport === "run" && !it.replacement) || isVbSlot || movable || it.movedAway ? () => setOpen(open === it.uid ? null : it.uid) : undefined}
                       isOpen={open === it.uid}
-                      extra={it.sport === "strength" && it.ex ? <StrengthQuickLog item={it} setData={setData} /> : it.sport === "run" && !it.replacement ? <GarminExport item={it} week={effW} /> : isVbSlot ? <VbAusfallPanel item={it} day={d.day} data={data} setData={setData} /> : undefined}
+                      extra={<>
+                        {it.sport === "strength" && it.ex ? <StrengthQuickLog item={it} setData={setData} /> : null}
+                        {it.sport === "run" && !it.replacement && !it.movedAway ? <GarminExport item={it} week={effW} /> : null}
+                        {isVbSlot ? <VbAusfallPanel item={it} day={d.day} data={data} setData={setData} /> : null}
+                        {movable || it.movedAway ? <MoveUnitPanel item={it} day={d.day} data={data} setData={setData} /> : null}
+                      </>}
                     />
                   );
                 })}
@@ -4356,7 +4430,7 @@ export default function App() {
           )}
 
           <footer className="mt-8 flex items-center justify-center text-[11px] text-slate-400">
-            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.11` : "Fortschritt wird automatisch gespeichert · v7.11"}</span>
+            <span>{savedAt ? `Zuletzt gespeichert ${savedAt.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · v7.13` : "Fortschritt wird automatisch gespeichert · v7.13"}</span>
           </footer>
         </main>
       </div>
